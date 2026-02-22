@@ -17,7 +17,7 @@ variable "state_bucket" {
 variable "data_bucket" {
   description = "Name for the data bucket (must be globally unique)."
   type        = string
-  default     = "ticket-forge-dvc"
+  default     = "ticketforge-dvc"
 }
 
 variable "repository" {

@@ -122,7 +122,9 @@ jobs:
         id: plan
         if: steps.filter.outputs.terraform == 'true'
         working-directory: terraform
-        run: terraform plan -lock=false -no-color | tee plan.txt
+        run: |
+          set -o pipefail
+          terraform plan -lock=false -no-color | tee plan.txt
         env:
           TF_VAR_region: ${{ secrets.TF_VAR_REGION }}
           TF_VAR_state_bucket: ${{ secrets.TF_VAR_STATE_BUCKET }}

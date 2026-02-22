@@ -59,13 +59,13 @@ Here we guide you through the steps to install the tooling and dependencies need
 
 3. DVC Setup (one-time per developer machine):
   Configure DVC to use the GCS bucket created by Terraform for storing data and models:
-  - `dvc remote add -d myremote gs://<your-dvc-bucket>`  
+  - `dvc remote add -d myremote gs://<your-dvc-bucket>`, or if using our bucket is is "gs://ticketforge-dvc"
     - Sets up `myremote` as the default remote storage. Replace `<your-dvc-bucket>` with the DVC bucket name created/configured via Terraform (see the Terraform README).
-  - `dvc remote modify --local myremote credentialpath /absolute/path/to/your-key.json`  
+  - `dvc remote modify --local myremote credentialpath /absolute/path/to/your-key.json`
     - Points DVC to the service account key file created in step 3 of the Terraform README. Replace the path with the absolute path to that JSON key on your machine. This only needs to be done once per developer machine.
-  - `dvc pull`  
+  - `dvc pull`
     - Downloads any data and models tracked by DVC from the remote. Run this when first setting up the project or whenever you need the latest tracked artifacts.
-  - `dvc push`  
+  - `dvc push`
     - Uploads your local DVC-tracked data and models to the remote. Run this **only after** you have added or updated data/models (e.g., after training or modifying datasets).
   - `dvc install` (optional, but adds Git hooks for DVC to automatically track changes to data and models)
 
