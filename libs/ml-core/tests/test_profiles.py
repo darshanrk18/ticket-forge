@@ -194,3 +194,52 @@ class TestProfileUpdater:
 
     with pytest.raises(ValueError, match="Alpha must be between 0 and 1"):
       ProfileUpdater(alpha=0.0)
+
+
+class TestBuildProfileUpdateQuery:
+  """Tests for ProfileUpdater.build_profile_update_query."""
+
+  @pytest.fixture
+  def updater(self) -> ProfileUpdater:
+    """Create a ProfileUpdater with alpha=0.9."""
+    return ProfileUpdater(alpha=0.9)
+
+  def test_returns_sql_and_params(self, updater: ProfileUpdater) -> None:
+    """Query and params tuple are returned."""
+    sql, params = updater.build_profile_update_query(
+      ticket_id="T-1", engineer_id=42, keywords_text="python docker"
+    )
+    assert isinstance(sql, str)
+    assert isinstance(params, tuple)
+
+  def test_sql_contains_update_and_decay(self, updater: ProfileUpdater) -> None:
+    """SQL string should contain the UPDATE and both alpha terms."""
+    sql, _ = updater.build_profile_update_query(
+      ticket_id="T-1", engineer_id=42, keywords_text=""
+    )
+    assert "UPDATE users" in sql
+    assert "profile_vector" in sql
+    assert "ticket_vector" in sql
+    assert "tickets_closed_count" in sql
+    assert "skill_keywords" in sql
+
+  def test_params_carry_alpha_values(self, updater: ProfileUpdater) -> None:
+    """Params should carry alpha, 1-alpha, ticket_id, keywords, engineer_id."""
+    sql, params = updater.build_profile_update_query(
+      ticket_id="T-7", engineer_id=99, keywords_text="aws k8s"
+    )
+    assert params[0] == 0.9  # alpha
+    assert params[1] == pytest.approx(0.1)  # 1 - alpha
+    assert params[2] == "T-7"  # ticket_id
+    assert params[3] == "aws k8s"  # keywords_text
+    assert params[4] == 99  # engineer_id
+
+  def test_alpha_consistency_with_numpy_update(self) -> None:
+    """SQL and numpy paths must use the same alpha."""
+    for alpha in (0.8, 0.95, 0.5):
+      updater = ProfileUpdater(alpha=alpha)
+      _, params = updater.build_profile_update_query(
+        ticket_id="X", engineer_id=1, keywords_text=""
+      )
+      assert params[0] == alpha
+      assert params[1] == pytest.approx(1.0 - alpha)

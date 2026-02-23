@@ -3,4 +3,6 @@
 Note: Validation module to be implemented in future updates.
 """
 
-__all__ = []
+from training.etl.postload.replay_tickets import TicketReplayer
+
+__all__ = ["TicketReplayer"]

@@ -54,17 +54,14 @@ Here we guide you through the steps to install the tooling and dependencies need
 
 1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/), [node 22 and npm](https://nodejs.org/en/download), and [just](https://github.com/casey/just)
 
-2. Then run: `just`
-  - This command installs all packages and configures the workspaces
+2. Then run: `just` - this command installs all packages and configures the workspaces
 
-3. DVC Setup (one-time per developer machine):
-  - Authenticate your terminal using `gcloud auth application-default login`
-  - `dvc pull`
-    - Downloads any data and models tracked by DVC from the remote. Run this when first setting up the project or whenever you need the latest tracked artifacts.
-  - `dvc push`
-    - Uploads your local DVC-tracked data and models to the remote. Run this **only after** you have added or updated data/models (e.g., after training or modifying datasets).
-  - `dvc install` (optional, but adds Git hooks for DVC to automatically track changes to data and models)
-  - `dvc remote add -d myremote gs://<your-dvc-bucket>` (optional, sets the DVC bucket if you are forking this repo)
+3. Setup DVC.
+   1. `gcloud auth application-default login` - authenticate your terminal using your Google Cloud account so DVC can access the configured remote storage
+   1. `dvc pull` - pull down data/models tracked by DVC
+   - Optional commands:
+     - `dvc push` - Uploads your local DVC-tracked data and models to the remote. Run this **only after** you have added or updated data/models (e.g., after training or modifying datasets)
+     - `dvc install` - optional, but adds Git hooks for DVC to automatically track changes to data and models
 
 
 4. Good to go!

@@ -1,6 +1,7 @@
 """Engineer profile update using Experience Decay Method."""
 
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 
@@ -69,6 +70,53 @@ class ProfileUpdater:
     engineer.last_updated = datetime.now()
 
     return engineer
+
+  # ------------------------------------------------------------------ #
+  #  SQL-based update (no vector round-trip)
+  # ------------------------------------------------------------------ #
+
+  def build_profile_update_query(
+    self,
+    ticket_id: str,
+    engineer_id: int,
+    keywords_text: str,
+  ) -> tuple[str, tuple[Any, ...]]:
+    """Build a parameterised SQL UPDATE for the Experience Decay Method.
+
+    The returned query applies the same formula as
+    :meth:`update_on_ticket_completion` but executes entirely inside
+    Postgres, reading the ticket vector directly from the ``tickets``
+    table so the 384-dim vectors never leave the database.
+
+    Args:
+        ticket_id: Primary key of the completed ticket.
+        engineer_id: ``member_id`` of the engineer to update.
+        keywords_text: Space-separated keywords extracted from the
+            ticket (will be converted to ``tsvector`` by Postgres).
+
+    Returns:
+        A ``(sql, params)`` tuple ready for ``cursor.execute(*result)``.
+    """
+    sql = """
+      UPDATE users
+      SET
+        profile_vector =
+          (%s * profile_vector
+           + %s * (SELECT ticket_vector FROM tickets WHERE ticket_id = %s)),
+        skill_keywords =
+          skill_keywords || to_tsvector('english', %s),
+        tickets_closed_count = tickets_closed_count + 1,
+        updated_at = now()
+      WHERE member_id = %s
+    """
+    params = (
+      self.alpha,
+      1.0 - self.alpha,
+      ticket_id,
+      keywords_text,
+      engineer_id,
+    )
+    return sql, params
 
   def get_decay_influence(self, tickets_completed: int) -> float:
     """Calculate how much influence the original resume still has.
