@@ -4,8 +4,7 @@ version = "0.1.0"
 description = "Machine Learning project monorepo"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-]
+dependencies = []
 
 [tool.uv.workspace]
 members = [
@@ -86,3 +85,7 @@ extraPaths = [
     "libs/ml-core",
     "libs/shared",
 ]
+
+
+[tool.setuptools.packages.find]
+where = ["apps", "libs"]
