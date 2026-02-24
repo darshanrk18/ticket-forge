@@ -98,6 +98,8 @@ get-wif-provider:
 get-repo-id repo='alearningcurve/ticket-forge':
     @gh api -H "Accept: application/vnd.github+json" repos/{{ repo }} | jq .id
 
+# starts airflow docker environment
 [group('airflow')]
 airflow-up:
+    chmod +777 ./data ./models
     docker compose up -d --build postgres pgadmin airflow

@@ -1,34 +1,27 @@
-# Astro Starter Kit: Basics
+# Web Frontend
 
-```sh
-npm create astro@latest -- --template basics
+Astro-based frontend for the ticket assignment system.
+
+## Overview
+
+Static site with interactive components for:
+- Viewing ticket assignments and predictions
+- Engineer profile management
+- Model performance dashboards
+
+## Structure
+
+```
+src/
+├── components/        # Reusable Astro components
+├── layouts/           # Page layout templates
+├── pages/             # Route-based pages (index.astro, etc.)
+└── styles/            # Global CSS and theme
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+**Framework:** Astro with TypeScript. Static generation with optional client-side hydration for interactive components.
 
-## 🚀 Project Structure
-
-Inside of your Astro project, you'll see the following folders and files:
-
-```text
-/
-├── public/
-│   └── favicon.svg
-├── src
-│   ├── assets
-│   │   └── astro.svg
-│   ├── components
-│   │   └── Welcome.astro
-│   ├── layouts
-│   │   └── Layout.astro
-│   └── pages
-│       └── index.astro
-└── package.json
-```
-
-To learn more about the folder structure of an Astro project, refer to [our guide on project structure](https://docs.astro.build/en/basics/project-structure/).
-
-## 🧞 Commands
+## Commands
 
 All commands are run from the root of the project, from a terminal:
 
@@ -41,6 +34,6 @@ All commands are run from the root of the project, from a terminal:
 | `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
 | `npm run astro -- --help` | Get help using the Astro CLI                     |
 
-## 👀 Want to learn more?
+## Learn More
 
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+Feel free to check [Astro documentation](https://docs.astro.build) or jump into the [Discord server](https://astro.build/chat).

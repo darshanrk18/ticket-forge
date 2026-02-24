@@ -26,18 +26,20 @@ Server will be available at `http://localhost:8000`
 - **Swagger UI**: `http://localhost:8000/docs`
 - **ReDoc**: `http://localhost:8000/redoc`
 
-## Project Structure
+## Structure
 
 ```
-web-backend/
-├── web_backend/
-│   ├── main.py           # FastAPI application and endpoints
-│   └── __init__.py
-├── tests/
-│   └── test_main.py      # API tests
-├── pyproject.toml        # Dependencies and configuration
-└── README.md
+web_backend/
+├── routes/            # FastAPI routers (thin handlers)
+├── services/          # Business logic and orchestration
+├── models/            # Pydantic request/response models
+└── main.py            # FastAPI application entry point
 ```
+
+**Architecture:** Strict separation of concerns following a layered pattern:
+- **Routes** — Parse requests, call services, return responses. No business logic.
+- **Services** — Orchestrate operations, call `ml-core` utilities, interact with database.
+- **Models** — Pydantic schemas for validation. No side effects.
 
 ## Dependencies
 

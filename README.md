@@ -17,15 +17,19 @@ TicketForge is an AI-Powered DevOps ticket assignment system capable of automati
 │   ├── web-backend      # API Service: Serves model predictions & business logic
 │   └── web-frontend     # User Interface: Dashboard for interacting with the model
 ├── libs
-│   ├── ml-core          # Shared Logic: Data schemas, scrapers, and transforms
-│   └── shared           # Utilities: Logging, DB clients, and global constants
-├── terraform            # IaC: Cloud resource provisioning
-├── data                 # Local Data: (Git-ignored) raw and processed datasets
-├── models               # Local Model Registry: (Git-ignored) serialized weights/pickles
+│   ├── ml-core          # Shared Logic: Embeddings, profiles, anomaly detection
+│   └── shared           # Utilities: Logging, caching, configuration
+├── dags                 # Airflow DAGs: ticket_etl, resume_etl, email callbacks
+├── docker               # Docker images: Airflow and base containers
+├── scripts              # Initialization scripts: Postgres schema and extensions
+├── terraform            # IaC: Cloud resource provisioning (GCP)
+├── data                 # Local Data: (Git-ignored, DVC-tracked) raw and processed datasets
+├── models               # Local Model Registry: (Git-ignored, DVC-tracked) trained models
 ├── notebooks            # R&D: Data exploration and model prototyping
+├── docker-compose.yml   # Docker Compose: Postgres, pgAdmin, Airflow orchestration
 ├── pyproject.toml       # Workspace Config: Links apps and libs via uv
 ├── uv.lock              # Pinned Python dependencies
-├── package.json         # Node.js dependencies for JS projects
+├── package.json         # Node.js dependencies for frontend
 ├── package-lock.json
 ├── Justfile             # Command runner (`just --list` for more info)
 ├── LICENSE
@@ -37,7 +41,7 @@ TicketForge is an AI-Powered DevOps ticket assignment system capable of automati
 Each workspace has its own README with detailed setup and usage instructions:
 
 ### Applications
-- [**training**](./apps/training/README.md) - ML model training pipeline for ticket time prediction
+- [**training**](./apps/training/README.md) - ML model training pipeline for ticket time prediction (which is run with [**docker and airflow**](./docker/README.md))
 - [**web-backend**](./apps/web-backend/README.md) - FastAPI service for model serving and business logic
 - [**web-frontend**](./apps/web-frontend/README.md) - Astro-based dashboard UI
 
@@ -69,15 +73,19 @@ Here we guide you through the steps to install the tooling and dependencies need
    - If using terraform locally, see setup section in [**terraform**](./terraform/README.md) folder
    - If doing training ETL pipeline, see setup section in [**training**](./apps/training/README.md)
 
-5. We have configured airflow to run locally using docker. To run airflow locally and see CLI commands for running pipelines, please follow instructions in [**airflow**](./docker/airflow/README.md)
+5. We have configured airflow to run locally using docker. To run airflow locally and see CLI commands for running pipelines, please follow instructions in [**docker**](./docker/README.md)
 
 ## Usage
 
-All usage scripts are defined in a `justfile` which can be run. Airflow commands are documented in [**airflow**](./docker/airflow/README.md).
+All usage scripts are defined in a `justfile` which can be run. Airflow commands are documented in [**docker**](./docker/README.md).
 ```sh
 $ just --list
 Available recipes:
+
     default                                        # Configure repository and install dependencies
+
+    [airflow]
+    airflow-up
 
     [data-pipeline]
     train *args=''                                 # runs the training script
@@ -95,10 +103,10 @@ Available recipes:
     [terraform]
     get-repo-id repo='alearningcurve/ticket-forge'
     get-wif-provider
-    tf *args=''                                    # runs arbitray terraform command
+    tf *args=''                                    # runs arbitrary terraform command
     tf-apply *args=''                              # runs terraform apply
     tf-check                                       # assert good linting
-    tf-init                                        # intializes terraform
+    tf-init                                        # initializes terraform
     tf-lint                                        # format terraform
     tf-plan *args=''                               # runs terraform plan
 ```
