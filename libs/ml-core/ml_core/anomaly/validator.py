@@ -127,7 +127,7 @@ class SchemaValidator:
           "missing": int(data[col].isnull().sum()),  # type: ignore[arg-type,call-overload]
         }
 
-    categorical_cols = data.select_dtypes(include=[object]).columns
+    categorical_cols = data.select_dtypes(include=["object", "str"]).columns
     for col in categorical_cols:
       if isinstance(data[col].iloc[0], list):
         continue

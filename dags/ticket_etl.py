@@ -31,8 +31,6 @@ for path in (
   if path_str not in sys.path:
     sys.path.append(path_str)
 
-# Training module imports are deferred to individual task functions
-
 DAG_ID = "ticket_etl"
 
 
@@ -51,7 +49,7 @@ def validate_runtime_config(**context: object) -> dict[str, Any]:
   conf = dag_run.conf if dag_run and dag_run.conf else {}  # type: ignore[union-attr]
 
   raw_limit = conf.get("limit_per_state")
-  limit_per_state: int | None = None
+  limit_per_state: int | None = 200  # Default to 200 for demo
   if raw_limit is not None:
     try:
       limit_per_state = int(raw_limit)
@@ -71,7 +69,6 @@ def validate_runtime_config(**context: object) -> dict[str, Any]:
     "run_timestamp": run_timestamp,
   }
 
-  # Push to XCom
   context["task_instance"].xcom_push(key="runtime", value=runtime)  # type: ignore[index, union-attr]
   return runtime
 
@@ -87,27 +84,23 @@ def scrape_github_issues(**context: object) -> dict[str, Any]:
   limit_per_state = runtime.get("limit_per_state")
   output_dir = Path(runtime["output_dir"])
 
-  print(f"Scraping GitHub issues (limit_per_state={limit_per_state})...")
+  print("Scraping GitHub issues (limit_per_state=" + str(limit_per_state) + ")...")
 
   raw_records = asyncio.run(scrape_all_issues(limit_per_state=limit_per_state))
-  print(f"Scraped {len(raw_records)} records")
+  print("Scraped", len(raw_records), "records")
 
-  # Save raw data as compressed JSON
   raw_path = output_dir / "tickets_raw.json.gz"
-  print(f"Saving raw scraped data to {raw_path}...")
+  print("Saving raw scraped data to", raw_path)
   with gzip.open(raw_path, "wt", encoding="utf-8") as f:
     json.dump(raw_records, f, indent=2)
-  print(f"Saved {len(raw_records)} raw records to {raw_path}")
+  print("Saved", len(raw_records), "raw records to", raw_path)
 
-  # Store only path and count in XCom (avoid large payload serialization)
   context["task_instance"].xcom_push(key="raw_path", value=str(raw_path))  # type: ignore[index, union-attr]
   return {"records_scraped": len(raw_records)}
 
 
 def run_transform(**context: object) -> dict[str, Any]:
   """Transform raw records into ticket features."""
-  import gzip
-
   from training.etl.transform.run_transform import transform_records
 
   raw_path = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
@@ -119,37 +112,55 @@ def run_transform(**context: object) -> dict[str, Any]:
 
   output_dir = Path(runtime["output_dir"])
 
-  # Load raw records from disk
-  print(f"Loading raw data from {raw_path}...")
+  print("Loading raw data from", raw_path)
   with gzip.open(raw_path, "rt", encoding="utf-8") as f:
     raw_records = json.load(f)
-  print(f"Loaded {len(raw_records)} raw records")
+  print("Loaded", len(raw_records), "raw records")
 
-  print(f"Transforming {len(raw_records)} records...")
+  print("Transforming", len(raw_records), "records...")
   transformed = transform_records(raw_records)
-  print(f"Transformed {len(transformed)} records")
+  print("Transformed", len(transformed), "records")
 
-  # Save to file for use by anomaly detection and bias modules
   transform_path = output_dir / "tickets_transformed_improved.jsonl"
-
   with open(transform_path, "w", encoding="utf-8") as f:
     for record in transformed:
       f.write(json.dumps(record) + "\n")
+  print("Saved transformed data to", transform_path)
 
-  print(f"Saved transformed data to {transform_path}")
-
-  # Store only path in XCom (avoid large payload serialization)
   context["task_instance"].xcom_push(key="transform_path", value=str(transform_path))  # type: ignore[index, union-attr]
   return {"records_transformed": len(transformed)}
 
 
-def run_anomaly_check(**context: object) -> dict[str, Any]:
-  """Run anomaly detection on transformed data and output detailed results."""
-  from training.analysis.run_anomaly_check import run_anomaly_check as analyze_anomaly
+def run_data_profiling_task(**context: object) -> dict[str, Any]:
+  """Run data profiling on transformed data (non-blocking)."""
+  from training.analysis.run_data_profiling import run_data_profiling
 
   transform_path = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="run_transform", key="transform_path"
   )
+  runtime = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
+    task_ids="validate_runtime_config", key="runtime"
+  )
+  output_dir = runtime["output_dir"]
+
+  try:
+    result = run_data_profiling(data_path=transform_path, output_dir=output_dir)
+    print("Data profiling complete!")
+    return {"profiling_done": True, "row_count": result["row_count"]}
+  except Exception as e:  # noqa: BLE001
+    print("Data profiling failed (non-blocking):", str(e))
+    return {"profiling_done": False, "error": str(e)}
+
+
+def run_anomaly_check(**context: object) -> dict[str, Any]:
+  """Run anomaly detection on transformed data (non-blocking with alerting)."""
+  from email_callbacks import send_dag_status_email
+  from training.analysis.run_anomaly_check import run_anomaly_check as analyze_anomaly
+
+  transform_path = context["task_instance"].xcom_pull(
+    task_ids="run_transform", key="transform_path"
+  )
+
   results = analyze_anomaly(
     data_path=transform_path,
     outlier_threshold=3.0,
@@ -159,16 +170,40 @@ def run_anomaly_check(**context: object) -> dict[str, Any]:
   anomaly_report = results["anomaly_report"]
   schema_issues = results["schema_result"]["num_amiss"]
   anomaly_text = results["text_report"]
+
   print(anomaly_text)
 
-  # If anomalies detected, raise an error to fail the task
-  if anomaly_report["total_anomalies"] > 20 or schema_issues > 5:
-    msg = f"Anomalies detected: {anomaly_report['total_anomalies']}"
-    raise AirflowFailException(msg)
+  total_anomalies = anomaly_report["total_anomalies"]
 
-  context["task_instance"].xcom_push(key="anomaly_report", value=anomaly_report)  # type: ignore[index, union-attr]
-  context["task_instance"].xcom_push(key="anomaly_email_text", value=anomaly_text)  # type: ignore[index, union-attr]
-  return {"anomalies_detected": anomaly_report["has_anomalies"]}
+  # ---- SOFT GATE LOGIC ----
+  anomaly_warn_threshold = 20
+  schema_warn_threshold = 5
+
+  if total_anomalies > anomaly_warn_threshold or schema_issues > schema_warn_threshold:
+    print(
+      f"⚠ WARNING: High anomaly count detected "
+      f"(anomalies={total_anomalies}, schema_issues={schema_issues})"
+    )
+
+    # Optional: Immediately send anomaly alert email
+    send_dag_status_email(
+      additional_text=anomaly_text,
+      subject_override="TicketForge: Anomaly Warning (Pipeline Continuing)",
+      **context,
+    )
+
+  else:
+    print("Anomaly levels within acceptable range.")
+
+  # Always push to XCom so downstream tasks can inspect
+  context["task_instance"].xcom_push(key="anomaly_report", value=anomaly_report)
+  context["task_instance"].xcom_push(key="anomaly_email_text", value=anomaly_text)
+
+  return {
+    "anomalies_detected": anomaly_report["has_anomalies"],
+    "total_anomalies": total_anomalies,
+    "schema_issues": schema_issues,
+  }
 
 
 def run_bias_detection(**context: object) -> dict[str, Any]:
@@ -181,7 +216,6 @@ def run_bias_detection(**context: object) -> dict[str, Any]:
     task_ids="run_transform", key="transform_path"
   )
 
-  # Call the analysis module function
   bias_detection_report = analyze_bias(transform_path)
 
   context["task_instance"].xcom_push(  # type: ignore[index, union-attr]
@@ -206,7 +240,6 @@ def run_bias_mitigation(**context: object) -> dict[str, Any]:
 
   output_dir = runtime["output_dir"]
 
-  # Call the analysis module function
   mitigation_results = run_bias_mitigation_weights(
     data_path=transform_path, output_dir=output_dir
   )
@@ -233,13 +266,11 @@ def prepare_bias_report(**context: object) -> dict[str, Any]:
     task_ids="run_bias_mitigation", key="bias_mitigation_results"
   )
 
-  # Combine both reports for email
   combined_report = {**bias_detection_report}
   combined_report["weights_by_group"] = bias_mitigation_results.get(
     "weights_by_group", {}
   )
 
-  # Generate detailed text report
   report_text = generate_bias_report_text(
     bias_detection_report, bias_mitigation_results
   )
@@ -271,50 +302,38 @@ def save_dataset_and_weights(**context: object) -> dict[str, Any]:
 
   output_dir = Path(transform_path).parent
 
-  # Compress the dataset
   compressed_path = output_dir / "tickets_transformed_improved.jsonl.gz"
-  print(f"Compressing dataset to {compressed_path}...")
+  print("Compressing dataset to", compressed_path)
 
   with open(transform_path, "rb") as f_in:
     with gzip.open(compressed_path, "wb") as f_out:
       f_out.writelines(f_in)
 
-  print(f"Saved compressed dataset to {compressed_path}")
+  print("Saved compressed dataset to", compressed_path)
 
-  # Verify bias weights exist
   if Path(weights_path).exists():
-    print(f"Bias mitigation weights already saved at {weights_path}")
+    print("Bias mitigation weights already saved at", weights_path)
   else:
-    msg = f"Bias mitigation weights not found at {weights_path}"
+    msg = "Bias mitigation weights not found at " + str(weights_path)
     raise AirflowFailException(msg)
 
-  # Save anomaly report text if available
+  result: dict[str, Any] = {
+    "dataset_saved": str(compressed_path),
+    "weights_saved": str(weights_path),
+  }
+
   if anomaly_text:
     anomaly_report_path = output_dir / "anomaly_report.txt"
     with open(anomaly_report_path, "w", encoding="utf-8") as f:
       f.write(anomaly_text)
-    print(f"Saved anomaly report to {anomaly_report_path}")
-  else:
-    print("No anomaly report text available to save")
-    anomaly_report_path = None
+    print("Saved anomaly report to", anomaly_report_path)
+    result["anomaly_report_saved"] = str(anomaly_report_path)
 
-  # Save bias report text if available
   if bias_text:
     bias_report_path = output_dir / "bias_report.txt"
     with open(bias_report_path, "w", encoding="utf-8") as f:
       f.write(bias_text)
-    print(f"Saved bias report to {bias_report_path}")
-  else:
-    print("No bias report text available to save")
-    bias_report_path = None
-
-  result = {
-    "dataset_saved": str(compressed_path),
-    "weights_saved": str(weights_path),
-  }
-  if anomaly_report_path:
-    result["anomaly_report_saved"] = str(anomaly_report_path)
-  if bias_report_path:
+    print("Saved bias report to", bias_report_path)
     result["bias_report_saved"] = str(bias_report_path)
 
   return result
@@ -337,28 +356,27 @@ def load_tickets_to_db(**context: object) -> dict[str, int]:
 
   dsn = str(runtime["dsn"])
 
-  # Load transformed records from disk
-  print(f"Loading transformed data from {transform_path}...")
+  print("Loading transformed data from", transform_path)
   transformed = []
-  with open(transform_path, "r", encoding="utf-8") as f:
+  with open(transform_path, encoding="utf-8") as f:
     for line in f:
       if line.strip():
         transformed.append(json.loads(line))
-  print(f"Loaded {len(transformed)} transformed records")
+  print("Loaded", len(transformed), "transformed records")
 
   print("Step 0/2: Ensuring assignee profiles exist...")
   profile_results = ensure_profiles_for_tickets(transformed, dsn=dsn)
-  print(f"Ensured {len(profile_results)} profile(s) for ticket assignees")
+  print("Ensured", len(profile_results), "profile(s) for ticket assignees")
 
   print("Step 1/2: Upserting tickets...")
   loaded_tickets = upsert_tickets(transformed, dsn=dsn)
-  print(f"Upserted {loaded_tickets} ticket(s) into Postgres")
+  print("Upserted", loaded_tickets, "ticket(s) into Postgres")
 
   print("Step 2/2: Upserting assignments...")
   assigned_count, missing_user_count = upsert_assignments(transformed, dsn=dsn)
-  print(f"Upserted {assigned_count} assignment row(s)")
+  print("Upserted", assigned_count, "assignment row(s)")
   if missing_user_count:
-    print(f"Skipped {missing_user_count} assignment(s): assignee not found in users")
+    print("Skipped", missing_user_count, "assignment(s): assignee not found in users")
 
   return {
     "tickets_loaded": loaded_tickets,
@@ -379,14 +397,13 @@ def replay_closed_tickets(**context: object) -> dict[str, int]:
 
   dsn = str(runtime["dsn"])
 
-  # Load transformed records from disk
-  print(f"Loading transformed data from {transform_path}...")
+  print("Loading transformed data from", transform_path)
   transformed = []
-  with open(transform_path, "r", encoding="utf-8") as f:
+  with open(transform_path, encoding="utf-8") as f:
     for line in f:
       if line.strip():
         transformed.append(json.loads(line))
-  print(f"Loaded {len(transformed)} transformed records")
+  print("Loaded", len(transformed), "transformed records")
 
   closed_ticket_ids = [
     str(t.get("id")) for t in transformed if t.get("issue_type") == "closed"
@@ -396,10 +413,10 @@ def replay_closed_tickets(**context: object) -> dict[str, int]:
     print("No closed tickets to replay")
     return {"tickets_replayed": 0}
 
-  print(f"Replaying {len(closed_ticket_ids)} closed tickets...")
+  print("Replaying", len(closed_ticket_ids), "closed tickets...")
   replayer = TicketReplayer(dsn=dsn)
   replayed_count = replayer.replay(closed_ticket_ids)
-  print(f"Replayed {replayed_count} closed ticket assignment(s)")
+  print("Replayed", replayed_count, "closed ticket assignment(s)")
 
   return {"tickets_replayed": replayed_count}
 
@@ -416,14 +433,12 @@ with DAG(
   max_active_runs=1,
   tags=["etl", "airflow", "tickets"],
 ) as dag:
-  # ===== Configuration =====
   validate_task = PythonOperator(
     task_id="validate_runtime_config",
     python_callable=validate_runtime_config,
     provide_context=True,
   )
 
-  # ===== Scrape & Transform =====
   scrape_task = PythonOperator(
     task_id="scrape_github_issues",
     python_callable=scrape_github_issues,
@@ -436,14 +451,18 @@ with DAG(
     provide_context=True,
   )
 
-  # ===== Anomaly Detection =====
+  profiling_task = PythonOperator(
+    task_id="run_data_profiling",
+    python_callable=run_data_profiling_task,
+    provide_context=True,
+  )
+
   anomaly_task = PythonOperator(
     task_id="run_anomaly_check",
     python_callable=run_anomaly_check,
     provide_context=True,
   )
 
-  # ===== Bias Detection & Mitigation (parallel) =====
   bias_detect_task = PythonOperator(
     task_id="run_bias_detection",
     python_callable=run_bias_detection,
@@ -456,35 +475,30 @@ with DAG(
     provide_context=True,
   )
 
-  # ===== Save Dataset & Weights =====
   save_task = PythonOperator(
     task_id="save_dataset_and_weights",
     python_callable=save_dataset_and_weights,
     provide_context=True,
   )
 
-  # ===== Prepare Bias Report =====
   prepare_report_task = PythonOperator(
     task_id="prepare_bias_report",
     python_callable=prepare_bias_report,
     provide_context=True,
   )
 
-  # ===== Load to Database =====
   load_db_task = PythonOperator(
     task_id="load_tickets_to_db",
     python_callable=load_tickets_to_db,
     provide_context=True,
   )
 
-  # ===== Replay Closed Tickets =====
   replay_task = PythonOperator(
     task_id="replay_closed_tickets",
     python_callable=replay_closed_tickets,
     provide_context=True,
   )
 
-  # ===== Finalization =====
   def send_email_with_report(**context: object) -> None:
     """Send email with bias report."""
     anomaly_text = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
@@ -506,18 +520,17 @@ with DAG(
     trigger_rule=TriggerRule.ALL_DONE,
   )
 
-  # ===== Task Dependencies =====
-  # Config -> Scrape -> Transform -> Anomaly Detection
-  _ = validate_task >> scrape_task >> transform_task >> anomaly_task
+  # Config -> Scrape -> Transform -> [Anomaly, Profiling] (parallel)
+  _ = validate_task >> scrape_task >> transform_task >> [anomaly_task, profiling_task]
 
-  # Anomaly Detection -> Bias Detection & Mitigation (parallel)
+  # Anomaly -> Bias Detection & Mitigation (parallel)
   _ = anomaly_task >> [bias_detect_task, bias_mitigate_task]
 
-  # Bias tasks -> Prepare Report -> Save Dataset & Weights (sequential)
+  # Bias tasks -> Prepare Report -> Save
   _ = [bias_detect_task, bias_mitigate_task] >> prepare_report_task >> save_task
 
-  # Anomaly Detection -> Load to DB -> Replay (independent of bias path)
+  # Anomaly -> Load to DB -> Replay (independent of bias path)
   _ = anomaly_task >> load_db_task >> replay_task
 
-  # All paths converge: save_task, replay_task before email
+  # All paths converge before email
   _ = [save_task, replay_task] >> send_email_task
