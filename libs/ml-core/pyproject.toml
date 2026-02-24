@@ -8,6 +8,8 @@ dependencies = [
     "pandas>=2.0.0",
     "scikit-learn>=1.5.0",
     "sentence-transformers>=2.2.0",
+    "great-expectations>=0.18.0",
+    "marshmallow<4.0.0",
     "shared",
     "torch>=2.10.0",
 ]
