@@ -53,7 +53,7 @@ class DagRunResult:
 
 
 # The DAG id that handles the resume-ingestion cold-start pipeline
-RESUME_INGEST_DAG_ID = "resume_ingest"
+RESUME_INGEST_DAG_ID = "resume_etl"
 
 
 # ---------------------------------------------------------------------- #
@@ -244,3 +244,4 @@ def trigger_resume_ingest_batch(
         dag_id=RESUME_INGEST_DAG_ID,
         conf={"resumes": resume_items},
     )
+

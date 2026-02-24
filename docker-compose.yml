@@ -1,6 +1,7 @@
 # Postgres with PgVector for storing engineered features and embeddings.
 # Usage: docker compose up -d
 # pgAdmin: http://localhost:5050
+# Airflow UI: http://localhost:8080
 
 services:
   postgres:
@@ -36,6 +37,41 @@ services:
     volumes:
       - pgadmin_data:/var/lib/pgadmin
 
+  airflow:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile
+    container_name: ticketforge-airflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://ticketforge:root@postgres:5432/ticketforge"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.session,airflow.api.auth.backend.basic_auth"
+      DATABASE_URL: "postgresql://ticketforge:root@postgres:5432/ticketforge"
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      PYTHONPATH: "/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./apps:/opt/ticket-forge/apps
+      - ./libs:/opt/ticket-forge/libs
+      - airflow_logs:/opt/airflow/logs
+      - airflow_plugins:/opt/airflow/plugins
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow connections create-default-connections &&
+      (airflow users create --username airflow --password airflow --firstname Air --lastname Flow --role Admin --email airflow@example.com || true) &&
+      airflow scheduler &
+      exec airflow webserver
+      "
+
   webapp:
     build:
       context: .
@@ -47,6 +83,9 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql://ticketforge:root@postgres:5432/ticketforge"
+      AIRFLOW_BASE_URL: "http://airflow:8080"
+      AIRFLOW_USERNAME: "airflow"
+      AIRFLOW_PASSWORD: "airflow"
     restart: "no"
     command:
       - "-m"
@@ -82,3 +121,5 @@ services:
 volumes:
   postgres_data:
   pgadmin_data:
+  airflow_logs:
+  airflow_plugins:

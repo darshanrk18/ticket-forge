@@ -56,7 +56,7 @@ class TestUploadResumes:
     def test_success_returns_trigger_response(self) -> None:
         """Happy path: trigger succeeds and returns dag_id + run_id."""
         fake = DagRunResult(
-            dag_id="resume_ingest",
+            dag_id="resume_etl",
             run_id="run_abc123",
             status=DagRunStatus.QUEUED,
             conf={},
@@ -69,14 +69,14 @@ class TestUploadResumes:
 
         assert resp.status_code == 200
         body = resp.json()
-        assert body["dag_id"] == "resume_ingest"
+        assert body["dag_id"] == "resume_etl"
         assert body["run_id"] == "run_abc123"
         assert body["status"] == "queued"
 
     def test_multiple_resumes_accepted(self) -> None:
         """Batch with several resumes triggers one DAG run."""
         fake = DagRunResult(
-            dag_id="resume_ingest",
+            dag_id="resume_etl",
             run_id="run_batch",
             status=DagRunStatus.QUEUED,
         )
@@ -130,7 +130,7 @@ class TestUploadResumes:
             ]
         }
         fake = DagRunResult(
-            dag_id="resume_ingest",
+            dag_id="resume_etl",
             run_id="run_noname",
             status=DagRunStatus.QUEUED,
         )
@@ -153,7 +153,7 @@ class TestGetPipelineStatus:
 
     def test_known_run_returns_status(self) -> None:
         fake = DagRunResult(
-            dag_id="resume_ingest",
+            dag_id="resume_etl",
             run_id="run_abc",
             status=DagRunStatus.RUNNING,
             conf={"resumes": []},
@@ -182,7 +182,7 @@ class TestGetPipelineStatus:
 
     def test_success_status_mapped(self) -> None:
         fake = DagRunResult(
-            dag_id="resume_ingest",
+            dag_id="resume_etl",
             run_id="run_done",
             status=DagRunStatus.SUCCESS,
             conf={},
@@ -198,7 +198,7 @@ class TestGetPipelineStatus:
 
     def test_failed_status_mapped(self) -> None:
         fake = DagRunResult(
-            dag_id="resume_ingest",
+            dag_id="resume_etl",
             run_id="run_fail",
             status=DagRunStatus.FAILED,
             conf={},
@@ -243,3 +243,4 @@ class TestDummyAirflowRoundTrip:
 
         assert status_resp.status_code == 200
         assert status_resp.json()["run_id"] == run_id
+

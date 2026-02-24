@@ -5,6 +5,7 @@
     "reportUnknownVariableType": "none",
     "reportUnknownArgumentType": "none",
     "pythonVersion": "3.12",
+    "stubPath": "typings",
     "extraPaths": [
         "apps/web-backend",
         "apps/training",
