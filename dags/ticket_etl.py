@@ -533,4 +533,4 @@ with DAG(
   _ = anomaly_task >> load_db_task >> replay_task
 
   # All paths converge before email
-  _ = [save_task, replay_task] >> send_email_task
+  _ = [save_task, replay_task, profiling_task] >> send_email_task

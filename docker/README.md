@@ -22,7 +22,7 @@ Airflow runs from the **root** `docker-compose.yml` to avoid duplicate Postgres 
 - Gmail app password (see [training setup](../apps/training/README.md))
 - Both credentials in `.env` at repo root
 
-### Start Services
+### Setup
 
 From repo root:
 
@@ -48,28 +48,31 @@ just airflow-up
 **Schedule:** Monthly (`@monthly`)
 
 **Runtime Parameters:**
-- `limit_per_state` (optional): Limit scraped issues per state (open/closed) per repo. Use `20` for testing to avoid GitHub rate limits.
+- `limit_per_state` (optional, default: 200): Limit scraped issues per state (open/closed) per repo. Use `20` for quick testing.
 
 **Outputs** (saved to `./data/github_issues-<timestamp>/`):
 - `tickets_raw.json.gz` — Compressed raw scraped issues
-- `tickets_transformed_improved.jsonl.gz` — Feature-engineered tickets with embeddings
-- `sample_weights.json` — Bias mitigation weights
-- `anomaly_report.txt` — Data quality analysis
-- `bias_report.txt` — Fairness analysis
+- `tickets_transformed_improved.jsonl` — Transformed tickets (uncompressed)
+- `tickets_transformed_improved.jsonl.gz` — Feature-engineered tickets with embeddings (compressed)
+- `sample_weights.json` — Bias mitigation weights by demographic group
+- `anomaly_report.txt` — Data quality analysis (missing values, outliers, schema)
+- `bias_report.txt` — Fairness analysis with per-slice performance metrics
+- `ticket_schema.json` — Auto-generated data schema (from profiling)
 
 **Pipeline Steps:**
-NOTE: some of these steps run in parallel  (see diagram below for more details):
-1. Validate config → Parse parameters, create timestamped output directory
-2. Scrape GitHub → GraphQL API calls for issues across repos
-3. Transform → Feature engineering (embeddings, keywords, labels)
-4. Anomaly detection → Statistical outlier detection (fails if >30 anomalies)
-5. Bias detection → Analyze assignment patterns across demographics
-6. Bias mitigation → Calculate sample weights
-7. Prepare report → Combine detection + mitigation results
-8. Save artifacts → Persist datasets, weights, reports
-9. Load to DB → Upsert tickets and assignments (with profile coldstart)
-10. Replay tickets → Apply Experience Decay to engineer profiles
-11. Send email → Notification with reports (success or failure)
+NOTE: Many steps run in parallel (see diagram below for execution flow):
+1. `validate_runtime_config` → Parse parameters (default limit: 200), create timestamped output directory
+2. `scrape_github_issues` → GraphQL API calls for issues across 3 repos × 3 states
+3. `run_transform` → Feature engineering (embeddings, keywords, labels)
+4. `run_anomaly_check` (parallel with 5) → Statistical checks, soft gate (warns if anomalies >20)
+5. `run_data_profiling` (parallel with 4) → Generate data quality statistics
+6. `run_bias_detection` (parallel with 7, after 4) → Analyze assignment fairness
+7. `run_bias_mitigation` (parallel with 6, after 4) → Calculate sample weights
+8. `prepare_bias_report` (after 6+7) → Combine bias detection + mitigation results
+9. `save_dataset_and_weights` (after 8) → Persist compressed datasets, weights, reports
+10. `load_tickets_to_db` (after 4, parallel to bias path) → Upsert tickets/assignments (with coldstart)
+11. `replay_closed_tickets` (after 10) → Apply Experience Decay to profiles
+12. `send_status_email` (after 9, 11, 5) → Email with anomaly + bias reports
 
 **Database Side Effects:**
 - Inserts/updates `tickets` table (with 384-dim pgvector embeddings)
@@ -80,16 +83,17 @@ NOTE: some of these steps run in parallel  (see diagram below for more details):
 **Trigger Examples:**
 
 ```bash
-# Full production scrape (WARNING: 1-2 hours due to rate limits)
-# Also might not be desired since full history can be irrelevant (i.e. tickets from 20 years
-# ago likely have poor predictive power for ticekts written 6 months ago)
+# Default run (200 per state per repo, ~600 tickets, ~3-5 min)
 docker compose exec airflow airflow dags trigger ticket_etl
 
-# Limited test run (recommended for evaluation)
-## scrape 20 per state (open/close) per repo (we scrape 3) => maximum 120 tickets (~1-2 minutes to run)
+# Quick test (20 per state per repo, ~60 tickets, ~1-2 min)
 docker compose exec airflow airflow dags trigger ticket_etl --conf '{"limit_per_state": 20}'
-## scrape 10000 per state (open/close)  per repo (we scrape 3) => maximum 60,000 tickets (~30-60 minutes to run)
-docker compose exec airflow airflow dags trigger ticket_etl --conf '{"limit_per_state": 10000 }'
+
+# Large dataset (10000 per state per repo, ~60,000 tickets, ~30-60 min)
+docker compose exec airflow airflow dags trigger ticket_etl --conf '{"limit_per_state": 10000}'
+
+# WARNING: Full scrape without limit takes 1-2 hours due to GitHub rate limits.
+# Historical data beyond 1-2 years may have poor predictive power for recent tickets.
 ```
 
 **Pipeline Visualization:**
@@ -98,7 +102,12 @@ docker compose exec airflow airflow dags trigger ticket_etl --conf '{"limit_per_
 
 **Execution Timeline:**
 
+Here is an example gantt chart when scraping a small amount of total tickets (~1k tickets)
 ![Ticket ETL Gantt Chart](./assets/ticket_etl_gantt.png)
+
+Here is an example gantt chart when scraping a large amount of total tickets (~20k)
+![Ticket ETL Gantt Chart](./assets/ticket_etl_gantt_large.png)
+
 
 ---
 
@@ -146,32 +155,46 @@ Both DAGs are optimized for performance through strategic parallelization of ind
 
 #### `ticket_etl` Parallel Execution
 
-We optimized this pipeline to use parrallel execution! The pipeline does two big things from a highlevel: create a dataset for training and import the tickets into our OLTP database (for our web app to use).
-To optimize our pipeline, after the anomaly detection step we parralelize into the creation of the training dataset and for the dabase update. Here's what it looks like in the DAG:
+We optimized this pipeline to use parallel execution! The pipeline does two big things from a high level: create a dataset for training and import the tickets into our OLTP database (for our web app to use).
+
+After transformation, the pipeline branches into multiple parallel paths:
 
 ```
-Anomaly Detection (Step 4)
+Transform (Step 3)
         |
-        ├──> | Bias Detection  |
-        └──> | Bias Mitigation |
+        ├──> [ Anomaly Check ] (Step 4)
+        └──> [ Data Profiling ] (Step 5)
                 |
-            ... create dataset, create bias reports, etc. (useful for training)
-        └──> ( Database Load )
-                |
-            ... create relationships for tickets and users in postgres, import data, "replay" ticekts (useful for our web-app)
+        Anomaly Check ──┬──> [ Bias Detection  ] (Step 6)
+                        ├──> [ Bias Mitigation ] (Step 7)
+                        |         |
+                        |    Prepare Report → Save Artifacts
+                        |    (Steps 8-9: useful for training)
+                        |
+                        └──> [ Database Load ] → [ Replay Tickets ]
+                             (Steps 10-11: useful for web-app)
 
+        All paths converge → Send Email (Step 12)
 ```
 
-**Impact:** When running parallel this saves a good amount of time (particularly since these operations are I/O heavy). On order of 60k samples this can save ~10 minutes
+**Key optimizations:**
 
-Note, the most time consuming steps are the web scraping and the embedding. This is clear looking at the gantt chart.
-- For the web scraping, the bottleneck is the rate limiting from GitHub. To parrallelize this furhter or get speed gains we would have to generate multiple access tokens or spoof IP to get around rate limits and API quotas, but this is against Terms-of-Service, hence our reason for not going forward with that.
-- For the embedding generation, the bottleneck is the fact we are running on a single machine. Because we run in a single machine, we are unable to parralelize this effectively since the main task takes most of the CPU/GPU (especially on weaker laptops). When we deploy, we will
+1. **Anomaly + Profiling (parallel)**: Both analyze data quality independently right after transform
+2. **Bias Detection + Mitigation (parallel)**: Run simultaneously after anomaly check, feeding into dataset artifacts
+3. **Database Load (independent path)**: Starts immediately after anomaly check, runs parallel to bias analysis path
+4. **Non-blocking gates**: Anomaly check uses soft gates (warns but doesn't fail), profiling failures don't block pipeline
+
+**Impact:** Parallel execution saves ~10 minutes on 60k samples by allowing I/O-heavy operations to run concurrently (helpful when db in use by other processes). The gantt chart clearly shows the overlapping execution.
+
+**Bottlenecks (cannot be parallelized):**
+- **Web scraping**: GitHub API rate limits (~1 request/second). Would require multiple tokens or IP spoofing to bypass, which violates ToS
+- **Embedding generation**: CPU/GPU intensive, consumes most resources on single machine. Will benefit from distributed workers when deployed to GCP
 
 #### `resume_etl` Parallel Execution
 
-This pipeline runs sequentially - why? Because the bottleneck is generating the embeddings. This is a CPU/GPU intensive task which will not benefit from additional concurrency since we run on one machine, since a single embedding process can consume most resources depending on whose machine is running it.
-Thus to maximize compatibility of this pipeline on different laptops we left this with no parrellization. When we deploy to GCP later on or use workers on seperate machines, we will update the pipeline.
+This pipeline runs sequentially - why? Because the bottleneck is generating the embeddings. This is a CPU/GPU intensive task which will not benefit from additional concurrency since we run on one machine, as a single embedding process can consume most resources depending on whose machine is running it.
+
+Thus to maximize compatibility of this pipeline on different laptops we left this with no parallelization. When we deploy to GCP later on or use workers on separate machines, we will update the pipeline.
 
 ### Resource Utilization
 

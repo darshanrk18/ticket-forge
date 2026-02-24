@@ -23,6 +23,7 @@ TicketForge is an AI-Powered DevOps ticket assignment system capable of automati
 ├── docker               # Docker images: Airflow and base containers
 ├── scripts              # Initialization scripts: Postgres schema and extensions
 ├── terraform            # IaC: Cloud resource provisioning (GCP)
+├── reports              # Project reports and writeups
 ├── data                 # Local Data: (Git-ignored, DVC-tracked) raw and processed datasets
 ├── models               # Local Model Registry: (Git-ignored, DVC-tracked) trained models
 ├── notebooks            # R&D: Data exploration and model prototyping
@@ -49,6 +50,10 @@ Each workspace has its own README with detailed setup and usage instructions:
 - [**ml-core**](./libs/ml-core/README.md) - Core ML utilities and data schemas (think embedder shared across ingress and web app)
 - [**shared**](./libs/shared/README.md) - Common utilities (caching, configuration, logging)
 
+## Reports
+
+- [**ML pipeline report**](./reports/00_ML_PIPELINE.md) - Report and setup notes for the ticket ETL pipeline
+
 ## Installation
 
 > [!IMPORTANT]
@@ -60,7 +65,7 @@ Here we guide you through the steps to install the tooling and dependencies need
 
 2. Then run: `just` - this command installs all packages and configures the workspaces
 
-3. Setup DVC.
+3. Setup DVC. the `data` and `models` directories are tracked with DVC. You must follow these instructions to get access to these folders!
    1. `gcloud auth application-default login` - authenticate your terminal using your Google Cloud account so DVC can access the configured remote storage
    1. `dvc pull` - pull down data/models tracked by DVC
    1.  `chmod 777 ./data` and `chmod 777 ./models` so that docker volumes work correctly

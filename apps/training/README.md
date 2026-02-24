@@ -14,21 +14,6 @@ GMAIL_APP_PASSWORD=...               # Gmail app password (see https://support.g
 
 Add these to `.env` at the repo root.
 
-## Quick Start
-
-```bash
-# Run the full training pipeline
-just train
-
-# Train specific models only
-just train -m forest linear
-
-# Run tests
-just pytest apps/training
-
-# Lint and type-check (before committing)
-just pylint apps/training
-```
 
 ## Structure
 
@@ -66,27 +51,29 @@ training/
 
 ### Pipeline Steps (ticket_etl DAG)
 
-1. **Validate Config** (`validate_config`) — Parses runtime parameters (e.g., `limit_per_state`), creates timestamped output directory at `data/github_issues-<timestamp>/`.
+1. **Validate Config** (`validate_runtime_config`) — Parses runtime parameters (e.g., `limit_per_state`, default: 200), creates timestamped output directory at `data/github_issues-<timestamp>/`.
 
 2. **Scrape GitHub Issues** (`scrape_github_issues`) — Uses GraphQL API to fetch issues from 3 repos (Ansible, Terraform, Prometheus) across 3 states (closed, open+assigned, open+unassigned). Saves to `tickets_raw.json.gz`. Rate-limited by GitHub API.
 
-3. **Transform** (`transform_tickets`) — Feature engineering: generates 384-dim embeddings via `ml_core.embeddings`, extracts skill keywords via `ml_core.keywords`, parses labels and metadata. Saves to `tickets_transformed_improved.jsonl.gz`.
+3. **Transform** (`run_transform`) — Feature engineering: generates 384-dim embeddings via `ml_core.embeddings`, extracts skill keywords via `ml_core.keywords`, parses labels and metadata. Saves to `tickets_transformed_improved.jsonl`.
 
-4. **Anomaly Detection** (`detect_anomalies`) — Statistical checks for missing values, outliers (z-score method), and schema violations using `ml_core.anomaly.AnomalyDetector` and `SchemaValidator`. Fails pipeline if >30 anomalies detected. Saves `anomaly_report.txt`.
+4. **Anomaly Detection** (`run_anomaly_check`) — **Runs in parallel with Step 5.** Statistical checks for missing values, outliers (z-score method), and schema violations. Soft gate: warns and emails if anomalies >20 or schema issues >5, but continues pipeline. Non-blocking.
 
-5. **Bias Detection** (`detect_bias`) — **Runs in parallel with Step 6.** Analyzes assignment patterns across demographic groups (repo, seniority) using `training.bias.BiasAnalyzer` with Fairlearn's `MetricFrame`.
+5. **Data Profiling** (`run_data_profiling`) — **Runs in parallel with Step 4.** Generates data quality report with statistics. Non-blocking, continues on failure.
 
-6. **Bias Mitigation** (`mitigate_bias`) — **Runs in parallel with Step 5.** Calculates inverse-frequency sample weights using `training.bias.BiasMitigator` to balance underrepresented groups. Saves `sample_weights.json`.
+6. **Bias Detection** (`run_bias_detection`) — **Runs in parallel with Step 7 after Step 4.** Analyzes assignment patterns across demographic groups (repo, seniority) using `training.bias.BiasAnalyzer` with Fairlearn's `MetricFrame`.
 
-7. **Prepare Bias Report** (`prepare_bias_report`) — Waits for Steps 5 & 6, combines results into human-readable `bias_report.txt` with per-slice performance metrics and mitigation recommendations.
+7. **Bias Mitigation** (`run_bias_mitigation`) — **Runs in parallel with Step 6 after Step 4.** Calculates inverse-frequency sample weights using `training.bias.BiasMitigator` to balance underrepresented groups. Saves `sample_weights.json`.
 
-8. **Save Artifacts** (`save_artifacts`) — Persists all compressed datasets (`.gz`), weights (`.json`), and text reports (`.txt`) to the timestamped output directory.
+8. **Prepare Bias Report** (`prepare_bias_report`) — Waits for Steps 6 & 7, combines results into human-readable `bias_report.txt` with per-slice performance metrics and mitigation recommendations.
 
-9. **Load to Database** (`load_to_db`) — Upserts tickets and assignments into Postgres. Uses `training.etl.ingest.coldstart` to create stub profiles in `users` table for any new engineers (no resume yet). Vectors stored with pgvector extension.
+9. **Save Artifacts** (`save_dataset_and_weights`) — Persists compressed dataset (`.jsonl.gz`), bias weights (`.json`), anomaly report (`.txt`), and bias report (`.txt`) to the timestamped output directory.
 
-10. **Replay Closed Tickets** (`replay_tickets`) — Applies Experience Decay formula to engineer profiles for completed assignments using `training.etl.postload.replay`. Updates `profile_vector` in `users` table: `profile_vector ← α · profile_vector + (1 − α) · ticket_vector` (default α = 0.95).
+10. **Load to Database** (`load_tickets_to_db`) — **Starts after Step 4, parallel to bias path (Steps 6-9).** Ensures assignee profiles exist (coldstart), then upserts tickets and assignments into Postgres. Vectors stored with pgvector extension.
 
-11. **Send Email** (`send_email`) — Sends Gmail notification to `mlopsgroup29@gmail.com` with anomaly and bias reports attached. Runs on both success and failure.
+11. **Replay Closed Tickets** (`replay_closed_tickets`) — Applies Experience Decay formula to engineer profiles for completed assignments using `training.etl.postload.replay`. Updates `profile_vector` in `users` table: `profile_vector ← α · profile_vector + (1 − α) · ticket_vector` (default α = 0.95).
+
+12. **Send Email** (`send_status_email`) — Waits for all paths (Steps 9, 11, 5), sends Gmail notification to `mlopsgroup29@gmail.com` with anomaly and bias reports. Runs on both success and failure.
 
 **Outputs:**
 - `data/github_issues-<timestamp>/tickets_transformed_improved.jsonl.gz` — Feature-engineered training data
@@ -132,6 +119,17 @@ uv run -m training.etl.ingest.transform
 - `best.txt` — Name of best-performing model
 
 **Performance:** Example results from validation run available in [assets/performance.png](./assets/performance.png).
+
+**Invoke Training Script**
+
+```bash
+# Run the full training pipeline
+just train
+
+# Train specific models only
+just train -m forest linear
+```
+
 
 ### Adding a New Model
 
