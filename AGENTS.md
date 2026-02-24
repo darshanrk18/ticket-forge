@@ -25,12 +25,12 @@ Workspace packages are managed by **uv** (see `[tool.uv.workspace]` in the root 
 
 ## Essential Commands (Justfile)
 
-All commands run from the **repo root** via [just](https://just.systems). The Justfile is the single source of truth for running tasks.
+All commands run from the **repo root** via [just](https://just.systems). The Justfile is the single source of truth for running tasks. All commands from the Justfile automatically run within python env. Do not interact with python env manually unless necessary, use the just commands. python venv is created in `.venv`.
 
 | Command | Purpose |
 |---|---|
 | `just` | Install all deps (Python, Node, pre-commit, DVC) |
-| `just pytest [args]` | Run Python tests (args forwarded to pytest) |
+| `just pytest [args]` | Run Python tests (args forwarded to pytest). For speed, prefer to run `just pytest path/to/module` when writing new tests |
 | `just pylint [paths]` | Lint + format + type-check (`ruff check --fix`, `ruff format`, `pyright`) |
 | `just pycheck [paths]` | Lint **then** test in one step |
 | `just check` | Full repo check (Python + Terraform) |

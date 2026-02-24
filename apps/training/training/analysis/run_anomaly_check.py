@@ -9,9 +9,6 @@ import pandas as pd
 from ml_core.anomaly import AlertSystem, AnomalyDetector, SchemaValidator
 from shared.configuration import Paths, getenv
 
-GMAIL_ADDRESS = getenv("GMAIL_APP_USERNAME")
-GMAIL_APP_PASSWORD = getenv("GMAIL_APP_PASSWORD")
-
 
 def run_anomaly_check(  # noqa: PLR0915
   data_path: str | Path,
@@ -103,18 +100,19 @@ def run_anomaly_check(  # noqa: PLR0915
   print("Total rows:", stats["row_count"])
   print("Total columns:", stats["column_count"])
 
-  if enable_alerts and anomaly_report["has_anomalies"] and GMAIL_APP_PASSWORD:
+  gmail_address = getenv("GMAIL_APP_USERNAME")
+  gmail_password = getenv("GMAIL_APP_PASSWORD")
+
+  if enable_alerts and anomaly_report["has_anomalies"]:
     print("\nTriggering alert...")
     alert_system = AlertSystem(alert_threshold=1)
     alert_system.send_gmail_alert(
       report=anomaly_report,
-      recipient=GMAIL_ADDRESS,
-      sender_email=GMAIL_ADDRESS,
-      sender_password=GMAIL_APP_PASSWORD,
+      recipient=gmail_address,
+      sender_email=gmail_address,
+      sender_password=gmail_password,
     )
-    print("Alert sent to", GMAIL_ADDRESS)
-  elif enable_alerts and anomaly_report["has_anomalies"]:
-    print("\nAnomalies found but GMAIL_APP_PASSWORD not set.")
+    print("Alert sent to", gmail_address)
   else:
     print("\nNo anomalies detected. No alert needed.")
 
