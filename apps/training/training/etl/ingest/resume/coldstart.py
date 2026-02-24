@@ -16,6 +16,7 @@ Requires a running Postgres instance with the pgvector extension and
 the schema from `scripts/postgres/init/02_schema.sql`` applied.
 """
 
+import math
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,8 +28,11 @@ from ml_core.embeddings import get_embedding_service
 from ml_core.keywords import get_keyword_extractor
 from ml_core.profiles.updater import ProfileUpdater
 from psycopg2.extras import RealDictCursor
+from shared import get_logger
 from training.etl.ingest.resume.resume_extract import ResumeExtractor
 from training.etl.ingest.resume.resume_normalize import ResumeNormalizer
+
+logger = get_logger(__name__)
 
 # Must match the vector(384) dimension in 02_schema.sql
 EMBEDDING_DIM = 384
@@ -54,7 +58,7 @@ class EngineerProfile:
   engineer_id: str
   github_username: Optional[str]
   full_name: Optional[str]
-  embedding: List[float]
+  embedding: Optional[List[float]]
   keywords: List[str]
   created_at: str
 
@@ -145,10 +149,10 @@ class ColdStartManager:
   ) -> List[EngineerProfile]:
     """Create stub profiles for users discovered via ticket assignees.
 
-    Users found only through tickets have no resume, so they receive
-    a zero embedding vector and empty keywords.  Their
-    ``resume_base_vector`` will be NULL in the database, signaling
-    that they are stubs awaiting enrichment from a real resume.
+    Users found only through tickets have no resume and no embedding,
+    so ``embedding`` is set to None.  Both ``resume_base_vector`` and
+    ``profile_vector`` will be NULL in the database, signaling that they
+    are stubs awaiting enrichment from a real resume.
     """
     profiles: List[EngineerProfile] = []
     for tu in ticket_users:
@@ -157,7 +161,7 @@ class ColdStartManager:
           engineer_id=tu.github_username,
           github_username=tu.github_username,
           full_name=tu.full_name or tu.github_username,
-          embedding=[0.0] * EMBEDDING_DIM,
+          embedding=None,
           keywords=[],
           created_at=datetime.now(tz=UTC).isoformat(),
         )
@@ -321,8 +325,12 @@ class ColdStartManager:
 
     Uses the same formula as
     ``ml_core.profiles.updater.ProfileUpdater.update_on_ticket_completion``.
+
+    Blending uses PostgreSQL array_fill to create scalar vectors (all elements
+    set to alpha or 1-alpha) then multiplies element-wise with the profile.
     """
     alpha = self._updater.alpha
+    one_minus_alpha = 1.0 - alpha
     cur.execute(
       """
       UPDATE users SET
@@ -330,7 +338,8 @@ class ColdStartManager:
         full_name          = COALESCE(%s, full_name),
         resume_base_vector = %s::vector,
         profile_vector     =
-          (%s * profile_vector  +  %s * %s::vector),
+          (array_fill(%s::real, ARRAY[384])::vector * profile_vector +
+           array_fill(%s::real, ARRAY[384])::vector * %s::vector),
         skill_keywords     =
           skill_keywords || to_tsvector('english', %s),
         updated_at         = now()
@@ -342,7 +351,7 @@ class ColdStartManager:
         profile.full_name,
         vec_text,
         alpha,
-        1.0 - alpha,
+        one_minus_alpha,
         vec_text,
         keywords_text,
         member_id,
@@ -360,25 +369,30 @@ class ColdStartManager:
   ) -> dict:
     """Insert a brand-new user row.
 
-    Stubs (zero-vector from ticket assignees) get a ``NULL``
-    ``resume_base_vector``; real resume profiles store the embedding.
+    Stubs from tickets have ``embedding=None`` and get NULL for both
+    ``resume_base_vector`` and ``profile_vector``. Real resume profiles
+    store the embedding in both fields.
     """
-    resume_vec = vec_text
+    if profile.embedding is None:
+      # this is the "stub"
+      pass
+
+    # Real resume profile: store embedding in both fields
     cur.execute(
       """
       INSERT INTO users
         (github_username, full_name,
-         resume_base_vector, profile_vector,
-         skill_keywords)
+          resume_base_vector, profile_vector,
+          skill_keywords)
       VALUES
         (%s, %s, %s::vector, %s::vector,
-         to_tsvector('english', %s))
+          to_tsvector('english', %s))
       RETURNING member_id
       """,
       (
         profile.github_username,
         profile.full_name,
-        resume_vec,
+        None if profile.embedding is None else vec_text,
         vec_text,
         keywords_text,
       ),
@@ -389,6 +403,11 @@ class ColdStartManager:
   # ------------------------------------------------------------------ #
   #  Orchestrator
   # ------------------------------------------------------------------ #
+
+  @staticmethod
+  def _is_zero_vector_stub(embedding: Optional[List[float]]) -> bool:
+    """Check if a profile's embedding is None (ticket-sourced stub)."""
+    return embedding is None
 
   def _upsert_profiles(self, profiles: List[EngineerProfile]) -> List[dict]:
     """Upsert profiles using github_username as the lookup key.
@@ -405,6 +424,9 @@ class ColdStartManager:
     3. **Decay blend** (``_decay_blend``) – alpha-weighted moving
        average, same formula as ``ProfileUpdater``.
     4. **Insert** (``_insert_new``) – no existing row.
+
+    Note: Stub profiles created from tickets (zero embeddings) never
+    trigger decay blend, only insert or skip.
     """
     conn = self._get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -412,17 +434,41 @@ class ColdStartManager:
 
     try:
       for p in profiles:
-        vec_text = "[" + ",".join(map(str, p.embedding)) + "]"
+        # Format vector text only for non-None embeddings
+        vec_text = (
+          "["
+          + ",".join(map(str, p.embedding if p.embedding is not None else [0.0] * 384))
+          + "]"
+        )
         keywords_text = " ".join(p.keywords) if p.keywords else ""
 
         assert p.github_username, (
           "we need this to be true since full name => collision risk"
         )
 
-        row = self._lookup_user(cur, p.github_username, vec_text)
+        # Zero-vector stubs from tickets only insert or skip, never blend
+        is_ticket_stub = self._is_zero_vector_stub(p.embedding)
+
+        # Only lookup if not a stub (stubs have no vector to search by)
+        if not is_ticket_stub:
+          assert vec_text is not None, "vec_text must be set for non-stub profiles"
+          row = self._lookup_user(cur, p.github_username, vec_text)
+        else:
+          # For stubs, just check if user exists by username
+          cur.execute(
+            "SELECT member_id, (resume_base_vector IS NULL) AS is_stub "
+            "FROM users WHERE github_username = %s",
+            (p.github_username,),
+          )
+          row = cur.fetchone()
 
         if row is None:
           results.append(self._insert_new(cur, p, vec_text, keywords_text))
+          continue
+
+        # If this is a ticket stub, skip existing user (don't enrich or blend)
+        if is_ticket_stub:
+          results.append(self._skip_duplicate(cur, p, row["member_id"]))
           continue
 
         is_same_resume = (
@@ -431,6 +477,7 @@ class ColdStartManager:
         )
 
         if bool(row["is_stub"]) or not is_same_resume:
+          assert vec_text is not None, "vec_text must be set for decay blend"
           results.append(
             self._decay_blend(cur, p, vec_text, keywords_text, row["member_id"])
           )
@@ -451,6 +498,23 @@ class ColdStartManager:
 # ---------------------------------------------------------------------- #
 #  ETL helper: create default profiles from scraped tickets
 # ---------------------------------------------------------------------- #
+def _is_falsy_or_empty(maybe_str: str | None) -> bool:
+  """Helper to determine if a variable is a either fasly or an empty string.
+
+  Expects the variable to be a string if it is not falsy.
+  """
+  if (
+    not maybe_str
+    or maybe_str is None
+    or (type(maybe_str) is float and math.isnan(maybe_str))
+  ):
+    return True
+
+  if type(maybe_str) is not str:
+    logger.warning(f"unexpected type {maybe_str}! treating as falseish")
+    return True
+
+  return maybe_str.strip() == ""
 
 
 def ensure_profiles_for_tickets(
@@ -478,10 +542,12 @@ def ensure_profiles_for_tickets(
   ticket_users: List[TicketUser] = []
   for t in tickets:
     username = t.get(assignee_key)
-    if not username or username in seen:
+    if _is_falsy_or_empty(username):
       continue
-    seen.add(username)
-    ticket_users.append(TicketUser(github_username=username))
+    assert type(username) is str
+    if username not in seen:
+      seen.add(username)
+      ticket_users.append(TicketUser(github_username=username))
 
   if not ticket_users:
     return []

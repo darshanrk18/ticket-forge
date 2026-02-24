@@ -243,4 +243,3 @@ class TestDummyAirflowRoundTrip:
 
         assert status_resp.status_code == 200
         assert status_resp.json()["run_id"] == run_id
-

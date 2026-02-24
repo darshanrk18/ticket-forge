@@ -58,6 +58,7 @@ class SchemaValidator:
         and len(extra_columns) == 0
         and len(type_mismatches) == 0
       ),
+      "num_amiss": len(missing_columns) + len(extra_columns) + len(type_mismatches),
     }
 
   def _is_compatible_type(self, actual_dtype: object, expected_type: type) -> bool:
@@ -68,6 +69,8 @@ class SchemaValidator:
       return pd.api.types.is_integer_dtype(actual_dtype)
     if expected_type is float:
       return pd.api.types.is_float_dtype(actual_dtype)
+    if expected_type is object:
+      return actual_dtype is object or str(actual_dtype) == "object"
     return False
 
   def generate_schema_from_data(self, data: pd.DataFrame) -> dict[str, type]:

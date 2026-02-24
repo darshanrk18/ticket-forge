@@ -244,4 +244,3 @@ def trigger_resume_ingest_batch(
         dag_id=RESUME_INGEST_DAG_ID,
         conf={"resumes": resume_items},
     )
-

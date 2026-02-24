@@ -16,10 +16,10 @@ This needs to be done once per GCP project.
 
 1. Set the following environment variables in a .env file (hint: use `gcloud config list` to see project id):
 
-```
-TF_VAR_project_id=YOUR_PROJECT_ID
+```sh
+TF_VAR_project_id=YOUR_PROJECT_ID # update to your GCP project id
 TF_VAR_region=us-east1
-TF_VAR_state_bucket=tf-demo-bucket-unique-name
+TF_VAR_state_bucket=ticketforge-terraform
 ```
 
 (note, if you have forked this repo, then set the `repository*` variables as well in `variables.tf`. There are helper scripts like `just get-repo-id YOUR-REPO` to help with this)

@@ -1,6 +1,6 @@
 """Tests for GitHub issue scraper."""
 
-from training.etl.ingest.scrape_github_issues_graphql import build_query
+from training.etl.ingest.scrape_github_issues_improved import build_query
 
 
 class TestGraphQLQueryBuilder:

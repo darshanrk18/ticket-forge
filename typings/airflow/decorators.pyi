@@ -1,6 +1,0 @@
-from typing import Callable, TypeVar
-
-F = TypeVar("F", bound=Callable[..., object])
-
-def task(*args: object, **kwargs: object) -> Callable[[F], F]: ...
-def dag(*args: object, **kwargs: object) -> Callable[[F], F]: ...

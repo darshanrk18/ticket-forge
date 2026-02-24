@@ -42,7 +42,7 @@ Each workspace has its own README with detailed setup and usage instructions:
 - [**web-frontend**](./apps/web-frontend/README.md) - Astro-based dashboard UI
 
 ### Libraries
-- [**ml-core**](./libs/ml-core/README.md) - Core ML utilities and data schemas
+- [**ml-core**](./libs/ml-core/README.md) - Core ML utilities and data schemas (think embedder shared across ingress and web app)
 - [**shared**](./libs/shared/README.md) - Common utilities (caching, configuration, logging)
 
 ## Installation
@@ -62,13 +62,18 @@ Here we guide you through the steps to install the tooling and dependencies need
    - Optional commands:
      - `dvc push` - Uploads your local DVC-tracked data and models to the remote. Run this **only after** you have added or updated data/models (e.g., after training or modifying datasets)
      - `dvc install` - optional, but adds Git hooks for DVC to automatically track changes to data and models
+     - `chmod 777 ./data` and `chmod 777 ./models` so that docker volumes work correctly
+   - NOTE: data directory is updated when you run the airflow pipeline. To commit these changes you must DVC add and push them up along with git PR!
 
+4. Set environment variables in `.env` file:
+   - If using terraform locally, see setup section in [**terraform**](./terraform/README.md) folder
+   - If doing training ETL pipeline, see setup section in [**training**](./apps/training/README.md)
 
-4. Good to go!
+5. We have configured airflow to run locally using docker. To run airflow locally and see CLI commands for running pipelines, please follow instructions in [**airflow**](./docker/airflow/README.md)
 
 ## Usage
 
-All usage scripts are defined in a `justfile` which can be run.
+All usage scripts are defined in a `justfile` which can be run. Airflow commands are documented in [**airflow**](./docker/airflow/README.md).
 ```sh
 $ just --list
 Available recipes:

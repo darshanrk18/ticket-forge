@@ -41,12 +41,12 @@ class TestDagFiles:
       (
         "ticket_etl.py",
         "ticket_etl",
-        {"validate_runtime_config", "run_ticket_etl", "ticket_etl_dag"},
+        {"validate_runtime_config", "run_transform"},
       ),
       (
         "resume_ingest.py",
         "resume_etl",
-        {"validate_runtime_config", "ingest_resumes_from_conf", "resume_ingest_dag"},
+        {"validate_runtime_config"},
       ),
     ],
   )
@@ -68,5 +68,3 @@ class TestDagFiles:
     function_names = _top_level_function_names(module)
     for fn in expected_functions:
       assert fn in function_names
-
-

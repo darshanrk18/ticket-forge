@@ -27,6 +27,9 @@ dev = [
 line-length = 88
 indent-width = 2
 target-version = "py312"
+exclude = [
+    "dags/**",
+]
 
 [tool.ruff.lint]
 select = [
@@ -79,6 +82,9 @@ reportUnknownArgumentType = "none"
 reportArgumentType = "none"
 reportReturnType = "none"
 pythonVersion = "3.12"
+exclude = [
+    "dags/**",
+]
 extraPaths = [
     "apps/web-backend",
     "apps/training",

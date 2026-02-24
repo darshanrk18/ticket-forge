@@ -103,11 +103,10 @@ class TestProfilesFromTickets:
     assert len(profiles) == 3
 
   def test_stub_has_zero_embedding(self) -> None:
-    """Stub embedding is a zero vector of the correct dimension."""
+    """Stub embedding is None (no embedding for ticket-sourced stubs)."""
     profiles = ColdStartManager.profiles_from_tickets([TicketUser("alice")])
     p = profiles[0]
-    assert len(p.embedding) == EMBEDDING_DIM
-    assert all(v == 0.0 for v in p.embedding)
+    assert p.embedding is None
 
   def test_stub_has_empty_keywords(self) -> None:
     """Stubs have no keywords."""
@@ -158,11 +157,11 @@ class TestMergeUserSources:
     assert merged[0].github_username == "alice"
 
   def test_ticket_only(self, mgr: ColdStartManager) -> None:
-    """Ticket-only users get zero-vector stub profiles."""
+    """Ticket-only users get None-embedding stub profiles."""
     merged = mgr.merge_user_sources([], [TicketUser("bob")])
     assert len(merged) == 1
     assert merged[0].github_username == "bob"
-    assert all(v == 0.0 for v in merged[0].embedding)
+    assert merged[0].embedding is None
 
   def test_resume_wins_over_ticket(self, mgr: ColdStartManager) -> None:
     """When the same user appears in both sources, the resume profile wins."""
@@ -170,7 +169,8 @@ class TestMergeUserSources:
     ticket = TicketUser("alice")
     merged = mgr.merge_user_sources([resume], [ticket])
     assert len(merged) == 1
-    # The kept profile should have a real embedding (from resume)
+    # The kept profile should have a real embedding (from resume), not None
+    assert merged[0].embedding is not None
     assert any(v != 0.0 for v in merged[0].embedding)
 
   def test_disjoint_users_combined(self, mgr: ColdStartManager) -> None:

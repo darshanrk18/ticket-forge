@@ -52,25 +52,34 @@ services:
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.session,airflow.api.auth.backend.basic_auth"
+      # Our application env vars
       DATABASE_URL: "postgresql://ticketforge:root@postgres:5432/ticketforge"
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       PYTHONPATH: "/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared"
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      GMAIL_APP_USERNAME: ${GMAIL_APP_USERNAME}
+      PYTHONUNBUFFERED: "1"
+      # Email/SMTP Configuration
+      AIRFLOW__EMAIL__EMAIL_BACKEND: "airflow.utils.email.send_email_smtp"
+      AIRFLOW__EMAIL__EMAIL_CONN_ID: "smtp_default"
+      AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
+      AIRFLOW__SMTP__SMTP_PORT: "587"
+      AIRFLOW__SMTP__SMTP_USER: ${GMAIL_APP_USERNAME}
+      AIRFLOW__SMTP__SMTP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      AIRFLOW__SMTP__SMTP_MAIL_FROM: ${GMAIL_APP_USERNAME}
+      AIRFLOW__SMTP__SMTP_STARTTLS: "True"
+      AIRFLOW__SMTP__SMTP_SSL: "False"
+      AIRFLOW__SMTP__SMTP_TIMEOUT: "30"
+      AIRFLOW__SMTP__RETRY_LIMIT: "5"
     ports:
       - "8080:8080"
     volumes:
       - ./dags:/opt/airflow/dags
       - ./apps:/opt/ticket-forge/apps
       - ./libs:/opt/ticket-forge/libs
+      - ./data:/opt/ticket-forge/data
       - airflow_logs:/opt/airflow/logs
       - airflow_plugins:/opt/airflow/plugins
-    command: >
-      bash -c "
-      airflow db migrate &&
-      airflow connections create-default-connections &&
-      (airflow users create --username airflow --password airflow --firstname Air --lastname Flow --role Admin --email airflow@example.com || true) &&
-      airflow scheduler &
-      exec airflow webserver
-      "
 
   webapp:
     build:
@@ -98,25 +107,25 @@ services:
     ports:
       - "80:8000"
 
-  trainer:
-    build:
-      context: .
-      dockerfile: docker/base.Dockerfile
-      args:
-        APP_NAME: training
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: "postgresql://ticketforge:root@postgres:5432/ticketforge"
-      PYTHONUNBUFFERED: "1"
-    restart: "no"
-    command:
-      - "-m"
-      - "apps.training.training.etl.ingest.resume.coldstart"
-      - "--pg"
-      - "--dsn"
-      - "postgresql://ticketforge:root@postgres:5432/ticketforge"
+  # trainer:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/base.Dockerfile
+  #     args:
+  #       APP_NAME: training
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: "postgresql://ticketforge:root@postgres:5432/ticketforge"
+  #     PYTHONUNBUFFERED: "1"
+  #   restart: "no"
+  #   command:
+  #     - "-m"
+  #     - "apps.training.training.etl.ingest.resume.coldstart"
+  #     - "--pg"
+  #     - "--dsn"
+  #     - "postgresql://ticketforge:root@postgres:5432/ticketforge"
 
 volumes:
   postgres_data:

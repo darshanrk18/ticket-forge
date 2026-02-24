@@ -88,6 +88,10 @@ class ProfileUpdater:
     Postgres, reading the ticket vector directly from the ``tickets``
     table so the 384-dim vectors never leave the database.
 
+    Uses PostgreSQL array_fill to create scalar vectors for element-wise
+    multiplication with pgvector, enabling the decay blend formula to work
+    entirely within the database.
+
     Args:
         ticket_id: Primary key of the completed ticket.
         engineer_id: ``member_id`` of the engineer to update.
@@ -101,8 +105,9 @@ class ProfileUpdater:
       UPDATE users
       SET
         profile_vector =
-          (%s * profile_vector
-           + %s * (SELECT ticket_vector FROM tickets WHERE ticket_id = %s)),
+          (array_fill(%s::real, ARRAY[384])::vector * profile_vector
+           + array_fill(%s::real, ARRAY[384])::vector *
+           (SELECT ticket_vector FROM tickets WHERE ticket_id = %s)),
         skill_keywords =
           skill_keywords || to_tsvector('english', %s),
         tickets_closed_count = tickets_closed_count + 1,

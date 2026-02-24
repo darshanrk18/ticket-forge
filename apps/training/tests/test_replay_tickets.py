@@ -162,11 +162,11 @@ class TestReplaySingle:
     ]
     assert len(update_calls) == 1
 
-    # Verify the alpha / (1-alpha) values passed to SQL
+    # Verify the alpha / (1-alpha) / ticket_id values passed to SQL
     sql_args = update_calls[0][0][1]  # positional args tuple
     assert sql_args[0] == alpha  # alpha
     assert sql_args[1] == pytest.approx(1.0 - alpha)  # 1 - alpha
-    assert sql_args[2] == assignment.ticket_id
+    assert sql_args[2] == assignment.ticket_id  # ticket_id
     assert sql_args[4] == assignment.engineer_id
 
     # single atomic commit after all updates

@@ -67,7 +67,7 @@ Always lint before committing. Pre-commit hooks enforce this automatically.
 - **ETL pipeline** — `apps/training/training/etl/` separates:
   - `ingest/` — data acquisition (scrapers, CSV conversion, resume extraction, coldstart).
   - `postload/` — post-ingestion processing (ticket replay for profile history).
-- **Configuration** — use `shared.configuration.Paths` for all file paths. Use `shared.logging.get_logger(__name__)` for logging. Never hard-code paths or use `print()` for diagnostics.
+- **Configuration** — use `shared.configuration.Paths` for all file paths. Use `shared.logging.get_logger(__name__)` for logging. Never hard-code paths or use `print()` for diagnostics. Use `shared.configuration.getenv` and `shared.configuration.getenv_or` for loading environemtn variables. Never use `os.getenv()` unless required.
 
 ### Documentation
 

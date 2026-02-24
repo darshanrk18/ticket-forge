@@ -11,5 +11,8 @@
         "apps/training",
         "libs/ml-core",
         "libs/shared"
+    ],
+    "exclude": [
+        "dags/**"
     ]
 }

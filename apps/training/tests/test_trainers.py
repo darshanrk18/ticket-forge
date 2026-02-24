@@ -93,6 +93,7 @@ class TestSVMTrainer:
 class TestXGBoostTrainer:
   """Tests for XGBoost trainer."""
 
+  @pytest.mark.timeout(120)
   @pytest.mark.filterwarnings("ignore")
   def test_xgboost_trainer_fits_successfully(self) -> None:
     """Test that XGBoost trainer can fit on small dataset."""
@@ -104,6 +105,7 @@ class TestXGBoostTrainer:
     assert grid.best_estimator_ is not None
     assert hasattr(grid, "cv_results_")
 
+  @pytest.mark.timeout(120)
   @pytest.mark.filterwarnings("ignore")
   def test_xgboost_trainer_predictions(self) -> None:
     """Test that XGBoost trainer can make predictions."""

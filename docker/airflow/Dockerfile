@@ -6,17 +6,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
   && rm -rf /var/lib/apt/lists/*
 
+USER airflow
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /opt/ticket-forge
 
-COPY apps /opt/ticket-forge/apps
-COPY libs /opt/ticket-forge/libs
+COPY --chown=airflow:0 docker/airflow/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-RUN chown -R airflow:0 /opt/ticket-forge
+# Copy workspace metadata
+COPY --chown=airflow:0 pyproject.toml uv.lock ./
+COPY --chown=airflow:0 apps/ ./apps/
+COPY --chown=airflow:0 libs/ ./libs/
 
+# Switch to airflow user to install packages into their venv
 USER airflow
-RUN pip install --no-cache-dir \
+
+# Install dependencies using uv into the airflow venv
+RUN --mount=type=cache,target=/home/airflow/.cache/uv,uid=50000,gid=0 \
+    uv pip install \
     -e /opt/ticket-forge/libs/shared \
     -e /opt/ticket-forge/libs/ml-core \
     -e /opt/ticket-forge/apps/training
 
+USER root
+RUN chown -R airflow:0 /opt/airflow && \
+    chmod -R g+w /opt/airflow
+
+USER airflow
+
 ENV PYTHONPATH=/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+USER airflow

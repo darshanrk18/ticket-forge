@@ -1,5 +1,6 @@
 """Airflow DAG that ingests resume payloads into engineer profiles."""
 # ruff: noqa: E402
+# noqa
 
 from __future__ import annotations
 
@@ -11,9 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from airflow.decorators import dag, task
+from airflow import DAG
 from airflow.exceptions import AirflowFailException
-from airflow.operators.python import get_current_context
+from airflow.operators.python import PythonOperator
+from airflow.utils.trigger_rule import TriggerRule
+from email_callbacks import send_dag_status_email
 
 # Make workspace packages importable from Airflow's DAG context.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -40,10 +43,8 @@ def _require_database_url() -> str:
   return dsn
 
 
-@task()
-def validate_runtime_config() -> dict[str, Any]:
+def validate_runtime_config(**context: Any) -> dict[str, Any]:
   """Read dag_run.conf and normalize resume payload config."""
-  context = get_current_context()
   dag_run = context.get("dag_run")
   conf = dag_run.conf if dag_run and dag_run.conf else {}
 
@@ -54,15 +55,23 @@ def validate_runtime_config() -> dict[str, Any]:
     msg = "resumes must be an array in dag_run.conf"
     raise AirflowFailException(msg)
 
-  return {
+  runtime = {
     "dsn": _require_database_url(),
     "resumes": resumes,
   }
 
+  # Push to XCom
+  context["task_instance"].xcom_push(key="runtime", value=runtime)
+  return runtime
 
-@task()
-def ingest_resumes_from_conf(runtime: dict[str, Any]) -> dict[str, int]:
+
+def ingest_resumes_from_conf(**context: Any) -> dict[str, int]:
   """Ingest resume payloads from dag_run.conf into users table profiles."""
+  # Pull from XCom
+  runtime = context["task_instance"].xcom_pull(
+    task_ids="validate_runtime_config", key="runtime"
+  )
+
   resumes = runtime.get("resumes", [])
   if not resumes:
     return {"resumes_processed": 0}
@@ -106,19 +115,35 @@ def ingest_resumes_from_conf(runtime: dict[str, Any]) -> dict[str, int]:
   return {"resumes_processed": processed}
 
 
-@dag(
+with DAG(
   dag_id=DAG_ID,
   schedule=None,
   start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
   catchup=False,
-  default_args={"owner": "ticketforge", "retries": 1},
+  default_args={
+    "owner": "ticketforge",
+    "retries": 0,
+  },
   tags=["etl", "airflow", "resumes"],
-)
-def resume_ingest_dag() -> None:
-  """Orchestrate POST-triggered resume ingestion only."""
-  runtime = validate_runtime_config()
-  ingest_resumes_from_conf(runtime)
+  max_active_runs=1,
+) as dag:
+  validate_task = PythonOperator(
+    task_id="validate_runtime_config",
+    python_callable=validate_runtime_config,
+    provide_context=True,
+  )
 
+  ingest_task = PythonOperator(
+    task_id="ingest_resumes_from_conf",
+    python_callable=ingest_resumes_from_conf,
+    provide_context=True,
+  )
 
-dag = resume_ingest_dag()
+  send_email_task = PythonOperator(
+    task_id="send_status_email",
+    python_callable=send_dag_status_email,
+    provide_context=True,
+    trigger_rule=TriggerRule.ALL_DONE,
+  )
 
+  validate_task >> ingest_task >> send_email_task

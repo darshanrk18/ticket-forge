@@ -201,18 +201,23 @@ class TestPipeline:
       calls.append("assignments")
       return (0, 0)
 
-    with patch(
-      "training.etl.postload.load_tickets.scrape_all_issues",
-      _fake_scrape,
-    ), patch(
-      "training.etl.postload.load_tickets.transform_records",
-      _fake_transform,
-    ), patch(
-      "training.etl.postload.load_tickets.upsert_tickets",
-      _fake_upsert_tickets,
-    ), patch(
-      "training.etl.postload.load_tickets.upsert_assignments",
-      _fake_upsert_assignments,
+    with (
+      patch(
+        "training.etl.postload.load_tickets.scrape_all_issues",
+        _fake_scrape,
+      ),
+      patch(
+        "training.etl.postload.load_tickets.transform_records",
+        _fake_transform,
+      ),
+      patch(
+        "training.etl.postload.load_tickets.upsert_tickets",
+        _fake_upsert_tickets,
+      ),
+      patch(
+        "training.etl.postload.load_tickets.upsert_assignments",
+        _fake_upsert_assignments,
+      ),
     ):
       result = asyncio.run(
         load_tickets.run_pipeline(dsn="postgresql://fake", limit_per_state=10)

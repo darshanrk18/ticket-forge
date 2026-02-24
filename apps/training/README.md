@@ -23,6 +23,19 @@ training
     ├── train_xgboost.py
     └── utils
 ```
+## Setup
+
+To use this module, you must:
+- create a gmail app (Follow the instruction provided here [link](https://support.google.com/accounts/answer/185833) and get your smtp password)
+- create github authentication token: You want to go to developer settings and then create a "GitHub Personal Access Token (classic)" (see [link](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens))
+
+Then you must add the following fields to your `.env` file
+
+```sh
+GMAIL_APP_USERNAME=YOUR_EMAIL
+GMAIL_APP_PASSWORD=...
+GITHUB_TOKEN=...
+```
 
 ## ETL Submodule
 

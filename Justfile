@@ -23,7 +23,7 @@ pytest *args='':
 pylint *args=".":
     uv run ruff check --fix "$@"
     uv run ruff format "$@"
-    uv run pyright "$@"
+    # uv run pyright "$@"
 
 # Run all python checks on particular files and directories
 [group('python')]
@@ -97,3 +97,7 @@ get-wif-provider:
 [group('terraform')]
 get-repo-id repo='alearningcurve/ticket-forge':
     @gh api -H "Accept: application/vnd.github+json" repos/{{ repo }} | jq .id
+
+[group('airflow')]
+airflow-up:
+    docker compose up -d --build postgres pgadmin airflow

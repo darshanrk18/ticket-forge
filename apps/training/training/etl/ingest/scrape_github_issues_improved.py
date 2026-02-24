@@ -1,11 +1,10 @@
 """GraphQL scraper for all issue types from all repos."""
 
 import asyncio
-import os
 
 import httpx
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+from shared.configuration import getenv
 from tqdm import tqdm
 
 
@@ -32,8 +31,6 @@ class GitHubIssue(BaseModel):
     populate_by_name = True
 
 
-load_dotenv()
-
 REPOS = [
   ("hashicorp", "terraform"),
   ("ansible", "ansible"),
@@ -45,10 +42,7 @@ GRAPHQL_URL = "https://api.github.com/graphql"
 
 def _headers() -> dict[str, str]:
   """Build GitHub GraphQL auth headers from env."""
-  token = os.getenv("GITHUB_TOKEN")
-  if not token:
-    msg = "GITHUB_TOKEN missing."
-    raise RuntimeError(msg)
+  token = getenv("GITHUB_TOKEN")
 
   return {
     "Authorization": f"Bearer {token}",
@@ -124,6 +118,8 @@ async def scrape_repo_state(  # noqa: PLR0915
 
   pbar = tqdm(unit="issue", desc=f"{repo_full} ({state.lower()})", leave=False)
 
+  retry = 0
+
   while True:
     if limit and len(issues_list) >= limit:
       break
@@ -133,19 +129,23 @@ async def scrape_repo_state(  # noqa: PLR0915
       json=build_query(owner, name, state, cursor),
     )
 
-    if response.status_code == 403:
-      pbar.write("Rate limited. Waiting 60s...")
-      await asyncio.sleep(60)
-      continue
-
     if response.status_code != 200:
-      pbar.write(f"GraphQL error {response.status_code}")
-      break
+      retry += 1
+      assert retry <= 5, "failed to scrape from repo after 5 attempts!"
+      if response.status_code == 403:
+        pbar.write("Rate limited. Waiting 60s...")
+        await asyncio.sleep(60)
+      else:
+        pbar.write(f"GraphQL error {response.status_code}")
+        await asyncio.sleep(2**retry)
+
+      continue
 
     payload = response.json()
     if "errors" in payload:
       pbar.write(f"GraphQL errors: {payload['errors']}")
       break
+    retry = 0
 
     issues_data = payload["data"]["repository"]["issues"]
     nodes = issues_data["nodes"]
