@@ -28,8 +28,11 @@ Team Members: William Walling-Sotolongo, Sameer Saxena, Aditya Rajendra Prasad, 
 **1.1 GitHub Issues/Tickets**
 
 Implemention: GraphQL-based GitHub Issue Scraper
+
 Location: apps/training/training/etl/ingest/scrape_github_issues_graphql.py
+
 Purpose: Collect ticket data from Terraform, Ansible, and Prometheus repositories for training.
+
 Key Features include:
 
 - It uses GitHub GraphQL API for 40x faster performance than REST
@@ -47,8 +50,8 @@ Data Collected:
 - Open + Unassigned: 2,640 (backlog)
 - Assignment Timestamps: 7,265 captured (11.9%)
 
-Raw output gets stored in `data/github_issues/all_tickets.json`. The cleaned and transformed data is in `tickets_transformed_improved.jsonl`. The `data/` directory is tracked in DVC and also shared via OneDrive:
-[Submission 2 - Data Pipeline - Relevant Files](https://northeastern-my.sharepoint.com/:f:/r/personal/saxena_same_northeastern_edu/Documents/Ticket-Forge/Submission%202%20-%20Data%20Pipeline%20-%20Relevant%20Files?csf=1&web=1&e=EjH7hG)
+Raw output gets stored in `data/github_issues/all_tickets.json`. The cleaned and transformed data is in `tickets_transformed_improved.jsonl`. 
+The `data/` directory is tracked in DVC and also shared via OneDrive: [Submission 2 - Data Pipeline - Relevant Files](https://northeastern-my.sharepoint.com/:f:/r/personal/saxena_same_northeastern_edu/Documents/Ticket-Forge/Submission%202%20-%20Data%20Pipeline%20-%20Relevant%20Files?csf=1&web=1&e=EjH7hG)
 
 Airflow outputs are stored in timestamped dataset containers. Example runs include [data/github_issues-2026-02-24T204631Z](../data/github_issues-2026-02-24T204631Z) with ~30,000 samples and [data/github_issues-2026-02-24T201901Z](../data/github_issues-2026-02-24T201901Z) with 17,842 tickets from the new pipeline. These containers include the full artifact set (transformed data, anomaly report, bias report, sample weights, and schema/profile outputs). The older [data/github_issues](../data/github_issues) dataset does not include bias reports, while the timestamped runs do.
 
@@ -139,15 +142,18 @@ To reproduce the resume ingress results: add `DATABASE_URL` to your `.env`, then
 ## 2 Data Preprocessing
 
 Implementation: Multi-stage transformation pipeline
+
 Location: apps/training/training/etl/transform/
+
 Components:
 
 **2.1 Text normalization - apps/training/training/etl/transform/normalize_text.py**:
+
 Processes raw ticket text by:
 
 - Removing markdown syntax (images, links, headers)
 - Truncation of large block of code as:
-	- Small sized blocks (<15 lines) - kept in full
+	- Small sized blocks (```<15 lines```) - kept in full
 	- Medium sized blocks - first 5 and last 5 lines
 	- Large sized blocks - first 10 and last 10 lines
 - Cleaning excessive whitespace and special characters
@@ -180,7 +186,7 @@ If seniority is missing or unrecognized, defaults to 2 (mid). Computes historica
 
 **2.4 Keyword Extraction - apps/training/training/etl/transform/keyword_extraction.py**
 
-Core implementation: libs/ml-core/ml_core/keywords/[extractor.py](http://extractor.py)
+Core implementation: libs/ml-core/ml_core/keywords/extractor.py
 
 Uses a hybrid approach to identify 300+ technical skills:
 
@@ -195,7 +201,7 @@ Skills categories: programming languages, frameworks, databases, cloud platforms
 
 Example: "Fix Kubernetes ingress timeout on AWS" -> ['kubernetes', 'aws']
 
-**2.5 Text Embeddings - apps/training/training/etl/transform/[embed.py](http://embed.py)**
+**2.5 Text Embeddings - apps/training/training/etl/transform/embed.py**
 
 Core implementation: libs/ml-core/ml_core/embeddings/service.py
 
@@ -286,15 +292,15 @@ Note: Ticket embeddings and resume/profile embeddings use the same 384-dimension
 
 ## 3 Test Modules
 
-- apps/training/tests/test_scrape_github_issues_graphql.py
-- apps/training/tests/test_transform_pipeline.py
-- apps/training/tests/test_bias.py
-- libs/ml-core/ml_core/tests/test_embeddings.py
-- libs/ml-core/ml_core/tests/test_keywords.py
-- libs/ml-core/ml_core/tests/test_profiles.py
-- apps/training/tests/test_coldstart.py
-- apps/web-backend/tests/test_coldstart_router.py
-- apps/training/tests/test_airflow_dags.py
+- apps/training/tests/test_scrape_github_issues_graphql.py - Validates that the GraphQL query builder correctly constructs repository-specific queries, handles pagination cursors, includes assignment timeline tracking, and requests all required issue fields for downstream processing.
+- apps/training/tests/test_transform_pipeline.py - Validates the transformation pipeline by testing text normalization (markdown removal and code truncation), business-hour temporal feature computation with fallback logic, keyword extraction from text batches, and correct 384-dimensional embedding generation.
+- apps/training/tests/test_bias.py - It validates data slicing across dimensions (repo, seniority, labels), metric computation, bias detection via Fairlearn, and report generation across regression and recommendation model types.
+- libs/ml-core/ml_core/tests/test_embeddings.py - Tests the EmbeddingService class and verifies initialization, correct embedding shape (384-d), determinism, batch embedding, error handling for empty inputs, semantic similarity ordering, and singleton behaviour of get_embedding_service()
+- libs/ml-core/ml_core/tests/test_keywords.py - Tests the KeywordExtractor class covers single/multi keyword extraction, case-insensitivity, alias resolution (e.g. K8s -> kubernetes), frequency-based ordering, top_n limiting, custom skills, and singleton behaviour of get_keyword_extractor().
+- libs/ml-core/ml_core/tests/test_profiles.py - Tests EngineerProfile serialization and ProfileUpdater and validates weighted embedding updates, keyword merging/incrementing, metadata updates, decay-based resume influence, alpha validation, and the SQL query builder for profile updates.
+- apps/training/tests/test_coldstart.py -  Validates resume cold-start profile creation and persistence logic, including resume text extraction, normalization with PII removal, skill keyword extraction, and 384-dimensional embedding generation. Verifies correct upsert outcomes (created, updated, skipped) across new profiles, existing stub profiles with ticket-derived data, and fully populated profiles. Also tests merge behavior ensuring resume-derived vectors and keywords combine correctly with pre-existing profile data.
+- apps/web-backend/tests/test_coldstart_router.py - Validates resume upload API endpoints (POST /api/v1/resumes/upload, GET /api/v1/resumes/status/{run_id}), request schema enforcement for required and optional fields, rejection of malformed payloads, batch resume handling, and DAG trigger/status integration ensuring resume_etl is correctly invoked with the expected payload.
+- apps/training/tests/test_airflow_dags.py - Validates Airflow DAG registration and loadability, confirming resume_ingest.py is discovered by the scheduler with DAG id resume_etl present in the DagBag with no import errors. Verifies task dependencies and default configuration for reliable pipeline execution.
 
 ## 4 Airflow DAGs
 - In-depth DAG overview, execution flow, and design decisions are documented in [docker/README.md](../docker/README.md#dags).
@@ -317,13 +323,29 @@ Resume ETL DAG:
 - Because we run our pipeline in airflow, we take advantage of the airflow logger to capture our logs for our ml pipeline
 - For scripts that run outside of Airflow, we use a python logger (rather than print) to better capture semantic and make things like warning more visible (see apps/training/training/trainers module and libs/ml-core/ml_core/embeddings/service.py)
 - For error tracking, the anomaly detection report and bias detection report are both included in the status email that Airflow sends at the end of each DAG run via send_status_email. This enables quick alerting of any important schema or data quality issues without needing to check the Airflow UI manually.
-	![][image1]
 - Pipeline outputs are saved under ./data with timestamped run folders (for example [data/github_issues-2026-02-24T201901Z](../data/github_issues-2026-02-24T201901Z)) containing transformed data and bias/anomaly reports; trained models and evaluation artifacts are written under [models/2026-02-24_160024](../models/2026-02-24_160024). Both directories are tracked in DVC.
 
 ## 7 Data Schema & Statistics Generation
 
-The project uses two complementary approaches. The custom SchemaValidator which validates a DataFrame against a declared expected schema (column presence, type checking for str/int/float) and can auto-infer a schema from live data via generate_schema_from_data(). It also generates descriptive statistics per run like row/column counts, numeric stats (mean, std, min, max, missing count), and categorical value distributions via generate_statistics().
-On top of that, a GreatExpectationsValidator is integrated using the great_expectations library, which auto-generates an ExpectationSuite called ticket_data_suite from the first batch of data, persists it to JSON via save_schema(), and runs formal ValidationDefinition checks on subsequent batches, reporting total vs. failed expectations.
+The project uses two complementary approaches. 
+
+Custom SchemaValidator (libs/ml-core/ml_core/anomaly/validator.py) 
+- Validates a DataFrame against a declared expected schema (column presence, type checking for str/int/float)
+- Can auto-infer a schema from live data via generate_schema_from_data().
+- Generate descriptive statistics per run like row/column counts, numeric stats (mean, std, min, max, missing count), and categorical value distributions via generate_statistics().
+
+GreatExpectationsValidator  (libs/ml-core/ml_core/anomaly/ge_validator.py) 
+- Auto-generates an ExpectationSuite called ticket_data_suite from the first batch of data
+- Persists it to JSON via save_schema()
+- Runs formal ValidationDefinition checks on subsequent batches, reporting total vs. failed expectations.
+
+Both are integrated into the run_data_profiling script (apps/training/training/analysis/run_data_profiling.py) which also performs skew detection by comparing key column distributions between the sample dataset and the full dataset to verify representativeness. The profiling script outputs:
+
+- ticket_schema.json: GE expectation suite
+- data_profile_report.json: full profile with statistics, validation results, and skew analysis
+
+This profiling step runs automatically in the Airflow DAG as the run_data_profiling task after every transform.
+
 
 ## 8 Anomaly Detection & Alerts
 
@@ -337,6 +359,8 @@ These checks are run against the transformed ticket data (tickets_transformed_im
 
 The alerting system receives the anomaly report and triggers if total_anomalies >= alert_threshold (default 1). Alerts include a timestamped message listing problematic columns, missing value percentages, and outlier counts. The actual delivery is via Gmail SMTP (smtp.gmail.com:587 with STARTTLS) and the credentials are loaded from a .env file (GMAIL_APP_PASSWORD) and alerts are sent to [mlopsgroup29@gmail.com](mailto:mlopsgroup29@gmail.com) (specified with GMAIL_APP_USERNAME).
 
+In the Airflow DAG, a soft gate is applied: if anomalies exceed the threshold, a warning email is sent immediately but the pipeline continues rather than failing. This ensures data quality issues are surfaced without blocking downstream tasks.
+
 ## 9 Pipeline Flow Optimization
 - Parallelization strategy, bottlenecks, and optimization rationale are documented in [docker/README.md](../docker/README.md#pipeline-optimization).
 - Refer to the execution timeline diagrams for how tasks overlap in practice.
@@ -346,13 +370,24 @@ The alerting system receives the anomaly report and triggers if total_anomalies 
 
 ## 10 Data Bias Detection Using Data Slicing
 
-Bias detection in TicketForge is implemented through the DataSlicer class located in libs/ml-core/ml_core/bias/slicer.py. This component systematically partitions the ticket dataset into meaningful subgroups across multiple categorical and operational dimensions. The dataset is sliced by repository (for example, hashicorp/terraform versus ansible/ansible), engineer seniority level, presence of a "bug" label, completion time buckets (fast, medium, slow), and extracted technical keywords. The get_all_slices() method serves as the primary entry point and returns a structured dictionary of named subgroups across all defined dimensions. This design ensures that fairness analysis can be conducted consistently and reproducibly across multiple bias axes within a single pipeline execution.
+Bias detection is implemented through the DataSlicer class (libs/ml-core/ml_core/bias/slicer.py). The dataset is sliced by repository, engineer seniority level, presence of a “bug” label, completion time buckets (fast, medium, slow), and extracted technical keywords.
 
-Performance evaluation across these slices is handled by the BiasAnalyzer class in libs/ml-core/ml_core/bias/analyzer.py. For each subgroup, the analyzer computes regression metrics including Mean Absolute Error (MAE), Root Mean Squared Error (RMSE), and R2 using scikit-learn. To quantify bias, it compares the best-performing and worst-performing slices within each dimension and calculates both the absolute and relative performance gaps. A bias condition is flagged when the relative gap exceeds a configurable threshold, which defaults to 10%. The detect_bias_multiple_dimensions() method automates this evaluation across all slicing dimensions and produces a structured summary identifying which dimensions exhibit statistically significant disparities. This ensures that fairness evaluation spans operational, contextual, and structural characteristics of the dataset rather than focusing on a single attribute.
+Performance evaluation across slices is handled by the BiasAnalyzer class (libs/ml-core/ml_core/bias/analyzer.py), which uses Fairlearn’s MetricFrame to compute MAE, RMSE, and R² per subgroup. A bias condition is flagged when the relative performance gap between best and worst slice exceeds 10%.
 
-Bias mitigation is implemented through the BiasMitigator class in libs/ml-core/ml_core/bias/mitigation.py, which provides complementary strategies that can be applied before or after model training. The resample_underrepresented() method balances group representation by upsampling minority slices using replacement sampling, ensuring that each subgroup has comparable sample size prior to training. The compute_sample_weights() method assigns weights to samples based on inverse frequency, allowing underrepresented groups to contribute proportionally more during model optimization while preserving the original dataset. In addition, the apply_fairness_threshold() method performs a post-processing adjustment by modifying predictions for groups whose mean predictions deviate significantly from the global mean, nudging outputs toward parity while maintaining overall predictive stability. Together, these approaches provide flexible mitigation pathways that can be selected depending on model constraints and fairness objectives.
+Analysis Results on TicketForge Data:
 
-To ensure transparency and reproducibility, bias evaluation results are documented using the BiasReport class in libs/ml-core/ml_core/bias/report.py. After each bias detection run, the system generates a structured plain-text report summarizing whether bias was detected, which slicing dimensions were flagged, and a detailed breakdown for each flagged dimension including the best and worst slice names, their MAE scores, the absolute and relative performance gaps, and the threshold used for comparison. The save_report() method writes this output to disk, creating a persistent audit record for each pipeline execution. This ensures traceability of fairness assessments and provides a documented history of bias analysis outcomes within the MLOps workflow.
+- Repository imbalance: Ansible (33,286), Terraform (21,611), Prometheus (6,374) which is 5.2x imbalance ratio
+- Completion time varies significantly by repo (Ansible avg: 3,097h, Terraform: 1,964h, Prometheus: 2,921h)
+- All tickets currently labeled mid seniority (heuristic limitation see Known Issues)
+
+Bias Mitigation (libs/ml-core/ml_core/bias/mitigation.py) provides:
+
+- resample_underrepresented(): upsamples minority groups to match the largest group, producing tickets_balanced.jsonl (99,858 tickets)
+- compute_sample_weights(): inverse frequency weighting (Prometheus: 3.20, Terraform: 0.95, Ansible: 0.61)
+- adjust_predictions_for_fairness(): post-processing adjustment to reduce group level prediction disparities
+
+
+Results are documented via the BiasReport class, which generates a structured plain-text report saved to bias_report.txt in the run output directory.
 
 Bias detection is executed during ML model training, and the resulting reports and sample weights are packaged alongside model artifacts. For example, see [models/2026-02-24_160024](../models/2026-02-24_160024) (DVC access required).
 
