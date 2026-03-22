@@ -50,6 +50,38 @@ def load_fit_dump(
   pretty_print_gridsearch(res, run_id, model_name)
 
 
+def save_cv_results(
+  grid: RandomizedSearchCV,
+  run_id: str,
+  model_name: str,
+) -> None:
+  """Save GridSearch cv_results_ to JSON for later sensitivity analysis.
+
+  Args:
+      grid:       Fitted RandomizedSearchCV object.
+      run_id:     UUID of the training run.
+      model_name: Identifier of the model type.
+  """
+  cv_path = Paths.models_root / run_id / f"cv_results_{model_name}.json"
+  if cv_path.exists():
+    logger.info("cv_results already saved at %s", cv_path)
+    return
+
+  # cv_results_ contains numpy types — convert to plain Python for JSON
+  serializable: dict[str, list] = {}
+  for key, val in grid.cv_results_.items():
+    if hasattr(val, "tolist"):
+      serializable[key] = val.tolist()
+    else:
+      serializable[key] = list(val)
+
+  with open(cv_path, "w") as f:
+    import json as _json
+
+    _json.dump(serializable, f)
+  logger.info("cv_results saved to %s", cv_path)
+
+
 def get_test_accuracy(
   grid: RandomizedSearchCV,
   run_id: str,
@@ -93,11 +125,16 @@ def evaluate_bias(
 ) -> dict | None:
   """Run bias analysis on model predictions.
 
+  Evaluates the model on slices of the test set defined by sensitive_feature
+  and saves a bias report. Bias detection uses Fairlearn MetricFrame to
+  compute metrics per subgroup. Sample weighting applied during training
+  is the primary mitigation strategy.
+
   Args:
       grid: Fitted grid search with best model
       run_id: UUID of the training run
       model_name: Identifier of the model type
-      sensitive_feature: Feature to use for bias analysis
+      sensitive_feature: Feature to use for bias analysis (e.g. "repo", "seniority")
 
   Returns:
       Bias analysis results, or None if sensitive feature not available
@@ -123,13 +160,33 @@ def evaluate_bias(
     logger.warning("Bias analysis skipped: metadata not available")
     return None
 
-  # Run bias analysis
   analyzer = BiasAnalyzer(threshold=threshold, model_type=model_type)
+  y_true_series = pd.Series(y)
+  y_pred_series = pd.Series(y_pred)
+
   analysis = analyzer.detect_bias_fairlearn(
-    y_true=pd.Series(y),
-    y_pred=pd.Series(y_pred),
+    y_true=y_true_series,
+    y_pred=y_pred_series,
     sensitive_features=sensitive_features,
   )
+
+  primary_metric = analysis["primary_metric"]
+  logger.info(
+    "Bias Analysis (%s): Best=%s (%s=%.4f), Worst=%s (%s=%.4f), Gap=%.1f%%",
+    sensitive_feature,
+    analysis["best_group"]["name"],
+    primary_metric,
+    analysis["best_group"][primary_metric],
+    analysis["worst_group"]["name"],
+    primary_metric,
+    analysis["worst_group"][primary_metric],
+    analysis["relative_gap"] * 100,
+  )
+
+  if analysis["bias_detected"]:
+    logger.warning("Bias detected for sensitive feature: %s", sensitive_feature)
+  else:
+    logger.info("No significant bias detected for: %s", sensitive_feature)
 
   # Save bias report
   report_path = (
@@ -146,24 +203,6 @@ def evaluate_bias(
     "detailed_results": {sensitive_feature: analysis},
   }
   BiasReport.save_report(report_data, str(report_path))
-
-  # Log summary
-  primary_metric = analysis["primary_metric"]
-  logger.info(
-    "Bias Analysis (%s): Best=%s (%s=%.4f), Worst=%s (%s=%.4f), Gap=%.1f%%",
-    sensitive_feature,
-    analysis["best_group"]["name"],
-    primary_metric,
-    analysis["best_group"][primary_metric],
-    analysis["worst_group"]["name"],
-    primary_metric,
-    analysis["worst_group"][primary_metric],
-    analysis["relative_gap"] * 100,
-  )
-  if analysis["bias_detected"]:
-    logger.warning("Bias detected for sensitive feature: %s", sensitive_feature)
-  else:
-    logger.info("No significant bias detected for: %s", sensitive_feature)
 
   return analysis
 
@@ -206,6 +245,7 @@ def pretty_print_gridsearch(
     total_time = df["mean_fit_time"].sum() + df["mean_score_time"].sum()
     logger.info("Total training time: %s", total_time)
     get_test_accuracy(grid, run_id, model_name)
+    save_cv_results(grid, run_id, model_name)
 
     # Run bias analysis on test set for all sensitive features
     for feature in DEFAULT_SENSITIVE_FEATURES:
