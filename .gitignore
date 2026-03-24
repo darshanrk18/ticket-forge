@@ -235,6 +235,8 @@ resumes_final.db
 /models
 /data
 
+# macOS-specific files
+.DS_Store
 
 .specify
 .github/agents

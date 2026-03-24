@@ -117,3 +117,25 @@ alert_system.send_gmail_alert(
 ```
 
 **Configuration:** Gmail alerts require 2FA-enabled account and app password (https://myaccount.google.com/apppasswords). Set `GMAIL_APP_PASSWORD` in `.env`.
+
+### Hybrid Retrieval (pgvector + TSVECTOR, RRF)
+
+This project supports a hybrid retrieval strategy that combines:
+
+- **Semantic** search using pgvector cosine distance (`users.profile_vector`)
+- **Lexical** search using full-text (`users.skill_keywords` via `tsvector`)
+- Merging ranked results using **Reciprocal Rank Fusion (RRF)**
+
+Query-building helpers live in `ml_core.retrieval.hybrid_retrieval`:
+
+```python
+from ml_core.retrieval import build_hybrid_rrf_engineer_query
+
+sql, params = build_hybrid_rrf_engineer_query(
+    ticket_vector=ticket_vector_384d,
+    keyword_query_text="EKS Ingress",
+    result_limit=5,
+)
+cursor.execute(sql, params)
+rows = cursor.fetchall()
+```
