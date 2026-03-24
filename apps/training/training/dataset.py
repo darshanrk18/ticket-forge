@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from pydantic import BaseModel
 from shared.configuration import RANDOM_SEED, TRAIN_USE_DUMMY_DATA, Paths, Splits_t
 from sklearn.datasets import make_regression
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import PredefinedSplit
 
 X_t = npt.NDArray[Any]
@@ -116,11 +118,15 @@ class Dataset(BaseModel):
   subset_size: int | None = None
 
   # ------------------------------------------------------------------ #
-  # Internal helpers                                                     #
+  # Internal helpers                                                   #
   # ------------------------------------------------------------------ #
 
   def _load_records(self) -> list[dict[str, Any]]:
     """Loads and splits the transformed ticket records for this split.
+
+    Stale tickets (completion_hours_business > 120, i.e. ~15 work days)
+    are filtered out as they represent abandoned or unreasonable tickets
+    that would skew model training and evaluation.
 
     Returns:
         List of ticket dicts belonging to this split.
@@ -132,22 +138,36 @@ class Dataset(BaseModel):
     indices = _split_indices(len(all_records), self.split)
     records = [all_records[i] for i in indices]
 
+    # Filter stale/abandoned tickets (> 120 business hours ~ 15 work days)
+    records = [
+      r
+      for r in records
+      if r.get("completion_hours_business") is None
+      or r["completion_hours_business"] <= 120
+    ]
+
     if self.subset_size is not None:
       records = records[: self.subset_size]
     return records
 
   # ------------------------------------------------------------------ #
-  # Public loaders                                                       #
+  # Public loaders                                                     #
   # ------------------------------------------------------------------ #
 
   def load_x(self) -> X_t:
     """Loads the feature matrix X.
 
-    Each row is the 384-dimensional embedding vector for one ticket,
-    as produced by the all-MiniLM-L6-v2 model in the transform stage.
+    Each row contains:
+    - 384-dimensional embedding vector (all-MiniLM-L6-v2)
+    - 100-dimensional TF-IDF vector from normalized_text
+    - Engineered features: repo one-hot, label flags, comments count,
+      seniority enum, historical avg completion, keyword count, text length.
+
+    The TF-IDF vectorizer is fit on first call and cached to disk so
+    training, validation, test and inference all share the same vocabulary.
 
     Returns:
-        Float32 array of shape (n_samples, 384).
+        Float32 array of shape (n_samples, 384 + 100 + 12).
     """
     if TRAIN_USE_DUMMY_DATA:
       dataset = make_regression(n_samples=100, n_features=1, noise=20, random_state=42)
@@ -157,19 +177,85 @@ class Dataset(BaseModel):
       return x  # type: ignore[return-value]
 
     records = self._load_records()
-    embeddings = [r["embedding"] for r in records]
-    return np.array(embeddings, dtype=np.float32)
+
+    # --- Embeddings (384-dim) ---
+    embeddings = np.array([r["embedding"] for r in records], dtype=np.float32)
+
+    # --- TF-IDF on normalized_text (100-dim) ---
+    tfidf_path = _find_latest_pipeline_output() / "tfidf_vectorizer.pkl"
+    texts = [r.get("normalized_text") or r.get("title") or "" for r in records]
+
+    if tfidf_path.exists():
+      tfidf = joblib.load(tfidf_path)
+    else:
+      tfidf = TfidfVectorizer(max_features=100, stop_words="english")
+      # Fit on all records (not just this split) for consistent vocabulary
+      pipeline_dir = _find_latest_pipeline_output()
+      all_records = _load_jsonl(pipeline_dir / "tickets_transformed_improved.jsonl")
+      # Only fit on non-stale records
+      all_records = [
+        r
+        for r in all_records
+        if r.get("completion_hours_business") is None
+        or r["completion_hours_business"] <= 120
+      ]
+      all_texts = [
+        r.get("normalized_text") or r.get("title") or "" for r in all_records
+      ]
+      tfidf.fit(all_texts)
+      joblib.dump(tfidf, tfidf_path)
+
+    tfidf_features = tfidf.transform(texts).toarray().astype(np.float32)
+
+    # --- Engineered features (12-dim) ---
+    repos = ["ansible/ansible", "hashicorp/terraform", "prometheus/prometheus"]
+    engineered = []
+    for r in records:
+      repo = r.get("repo", "")
+      repo_onehot = [1.0 if repo == R else 0.0 for R in repos]
+
+      labels = r.get("labels", "") or ""
+      has_bug = 1.0 if "bug" in labels else 0.0
+      has_enhancement = 1.0 if "enhancement" in labels else 0.0
+      has_crash = 1.0 if "crash" in labels else 0.0
+
+      comments = float(r.get("comments_count") or 0)
+      seniority = float(r.get("seniority_enum") or 0)
+      hist_avg = float(r.get("historical_avg_completion_hours") or 0)
+      kw_count = float(len(r.get("keywords") or []))
+      title_len = float(len(r.get("title") or ""))
+      body_len = float(len(r.get("body") or ""))
+
+      engineered.append(
+        repo_onehot
+        + [
+          has_bug,
+          has_enhancement,
+          has_crash,
+          comments,
+          seniority,
+          hist_avg,
+          kw_count,
+          title_len,
+          body_len,
+        ]
+      )
+
+    eng_arr = np.array(engineered, dtype=np.float32)
+
+    return np.nan_to_num(np.hstack([embeddings, tfidf_features, eng_arr]), nan=0.0)
 
   def load_y(self) -> Y_t:
     """Loads the target vector y.
 
     Target is completion_hours_business — the number of business hours
     between ticket assignment and closure, as computed by the transform
-    stage. Tickets with missing values are replaced with the column mean
-    so downstream models always receive a complete target vector.
+    stage. Stale tickets (> 120 hrs) are filtered out in _load_records().
+    Remaining missing values are replaced with the column mean.
+    Log-transform (log1p) is applied to reduce the impact of the right tail.
 
     Returns:
-        Float64 array of shape (n_samples,).
+        Float64 array of shape (n_samples,), log1p-transformed.
     """
     if TRAIN_USE_DUMMY_DATA:
       dataset = make_regression(n_samples=100, n_features=1, noise=20, random_state=42)
@@ -187,7 +273,7 @@ class Dataset(BaseModel):
     if missing_mask.any():
       y[missing_mask] = np.nanmean(y)
 
-    return y
+    return np.log1p(y)  # log-transform to handle heavy right tail
 
   def load_metadata(self) -> pd.DataFrame:
     """Loads metadata for bias analysis (repo, seniority, labels, completion time).

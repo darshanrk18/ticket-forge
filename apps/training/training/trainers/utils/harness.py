@@ -99,10 +99,15 @@ def get_test_accuracy(
   def compute_metrics() -> dict[str, float]:
     test_dataset = Dataset(split="test")
 
-    x = test_dataset.load_x()  # noqa: N806
-    y = test_dataset.load_y()
+    x = test_dataset.load_x()
+    y = test_dataset.load_y()  # already log1p-transformed from load_y()
 
     y_pred = grid.predict(x)
+
+    # Inverse-transform both back to real hours for interpretable metrics
+    y = np.expm1(y)
+    y_pred = np.expm1(y_pred)
+
     mse = mean_squared_error(y, y_pred)
 
     return {
