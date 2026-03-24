@@ -9,10 +9,19 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from pydantic import BaseModel
-from shared.configuration import RANDOM_SEED, TRAIN_USE_DUMMY_DATA, Paths, Splits_t
+from shared.configuration import (
+  RANDOM_SEED,
+  TRAIN_USE_DUMMY_DATA,
+  Paths,
+  Splits_t,
+  getenv_or,
+)
+from shared.logging import get_logger
 from sklearn.datasets import make_regression
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import PredefinedSplit
+
+logger = get_logger(__name__)
 
 X_t = npt.NDArray[Any]
 Y_t = npt.NDArray[np.floating]
@@ -21,14 +30,18 @@ Y_t = npt.NDArray[np.floating]
 _SPLIT_RATIOS: dict[str, float] = {"train": 0.7, "validation": 0.15, "test": 0.15}
 
 
-def _find_latest_pipeline_output() -> Path:
+def find_latest_pipeline_output() -> Path:
   """Returns the path to the most recent timestamped pipeline output directory
   that contains a tickets_transformed_improved.jsonl file.
 
-  Looks for directories matching 'github_issues-*' under data_root, sorted
-  lexicographically (ISO timestamps sort correctly this way), skipping any
-  incomplete directories that lack the required data file. Falls back to
-  the legacy 'github_issues' directory if no valid timestamped run is found.
+  First checks the TICKET_FORGE_DATASET_ID environment variable for an explicit
+  dataset override. If set, uses that dataset ID (can be either a directory name
+  like 'github_issues-2026-02-24T200000Z' or an absolute path).
+
+  If no override is set, looks for directories matching 'github_issues-*' under
+  data_root, sorted lexicographically (ISO timestamps sort correctly this way),
+  skipping any incomplete directories that lack the required data file. Falls
+  back to the legacy 'github_issues' directory if no valid timestamped run is found.
 
   Returns:
       Path to the latest valid pipeline output directory.
@@ -38,9 +51,28 @@ def _find_latest_pipeline_output() -> Path:
   """
   data_root = Paths.data_root
   required_file = "tickets_transformed_improved.jsonl"
+
+  # Check for explicit dataset override via environment variable
+  dataset_override = getenv_or("TICKET_FORGE_DATASET_ID")
+  if dataset_override:
+    override_path = Path(dataset_override)
+    # If relative, resolve relative to data_root; if absolute, use as-is
+    if not override_path.is_absolute():
+      override_path = data_root / override_path
+    if (override_path / required_file).exists():
+      logger.info(f"using dataset override: {override_path}")
+      return override_path
+    msg = (
+      f"Dataset override {dataset_override} is not valid or missing "
+      f"{required_file}. Override path resolved to: {override_path}"
+    )
+    raise FileNotFoundError(msg)
+
+  # Default: find latest timestamped run
   timestamped = sorted(data_root.glob("github_issues-*"), reverse=True)
   for candidate in timestamped:
     if (candidate / required_file).exists():
+      logger.info(f"latest piece of data: {candidate}")
       return candidate
   legacy = data_root / "github_issues"
   if (legacy / required_file).exists():
@@ -73,6 +105,7 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
       line = line.strip()
       if line:
         records.append(json.loads(line))
+  logger.info(f"loaded {len(records)}")
   return records
 
 
@@ -131,12 +164,14 @@ class Dataset(BaseModel):
     Returns:
         List of ticket dicts belonging to this split.
     """
-    pipeline_dir = _find_latest_pipeline_output()
+    pipeline_dir = find_latest_pipeline_output()
     jsonl_path = pipeline_dir / "tickets_transformed_improved.jsonl"
     all_records = _load_jsonl(jsonl_path)
 
     indices = _split_indices(len(all_records), self.split)
     records = [all_records[i] for i in indices]
+
+    n_records = len(records)
 
     # Filter stale/abandoned tickets (> 120 business hours ~ 15 work days)
     records = [
@@ -148,6 +183,10 @@ class Dataset(BaseModel):
 
     if self.subset_size is not None:
       records = records[: self.subset_size]
+
+    logger.info(
+      f"loaded {len(records)}/{n_records} record(s) {self.subset_size=} {self.split=}"
+    )
     return records
 
   # ------------------------------------------------------------------ #
@@ -182,28 +221,20 @@ class Dataset(BaseModel):
     embeddings = np.array([r["embedding"] for r in records], dtype=np.float32)
 
     # --- TF-IDF on normalized_text (100-dim) ---
-    tfidf_path = _find_latest_pipeline_output() / "tfidf_vectorizer.pkl"
+    tfidf_path = find_latest_pipeline_output() / "tfidf_vectorizer.pkl"
     texts = [r.get("normalized_text") or r.get("title") or "" for r in records]
 
     if tfidf_path.exists():
+      logger.info("loading existing vectorizer")
       tfidf = joblib.load(tfidf_path)
     else:
+      logger.info("create new vectorizer")
       tfidf = TfidfVectorizer(max_features=100, stop_words="english")
       # Fit on all records (not just this split) for consistent vocabulary
-      pipeline_dir = _find_latest_pipeline_output()
-      all_records = _load_jsonl(pipeline_dir / "tickets_transformed_improved.jsonl")
-      # Only fit on non-stale records
-      all_records = [
-        r
-        for r in all_records
-        if r.get("completion_hours_business") is None
-        or r["completion_hours_business"] <= 120
-      ]
-      all_texts = [
-        r.get("normalized_text") or r.get("title") or "" for r in all_records
-      ]
+      all_texts = [r.get("normalized_text") or r.get("title") or "" for r in records]
       tfidf.fit(all_texts)
       joblib.dump(tfidf, tfidf_path)
+      logger.info("done creating vectorizer!")
 
     tfidf_features = tfidf.transform(texts).toarray().astype(np.float32)
 
@@ -327,7 +358,7 @@ class Dataset(BaseModel):
     # then fall back to the legacy fixed path.
     candidates: list[Path] = []
     try:
-      candidates.append(_find_latest_pipeline_output() / "sample_weights.json")
+      candidates.append(find_latest_pipeline_output() / "sample_weights.json")
     except FileNotFoundError:
       pass
     candidates.append(Paths.data_root / "github_issues" / "sample_weights.json")

@@ -82,7 +82,13 @@ def _collect_artifacts(run_dir: Path, model_name: str) -> list[Path]:
   candidates = [
     run_dir / f"{model_name}.pkl",
     run_dir / f"eval_{model_name}.json",
+    run_dir / "performance.png",
+    run_dir / "best.txt",
+    run_dir / "gate_report.json",
+    run_dir / "run_manifest.json",
     *run_dir.glob(f"bias_{model_name}_*.txt"),
+    *run_dir.glob(f"hyperparam_sensitivity_{model_name}.png"),
+    *run_dir.glob(f"shap_importance_{model_name}.png"),
   ]
   artifacts = [p for p in candidates if p.exists()]
 

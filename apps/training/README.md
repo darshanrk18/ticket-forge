@@ -130,6 +130,127 @@ just train
 just train -m forest linear
 ```
 
+MLflow integration is enabled by default in `training.cmd.train`. The command
+resolves the tracking URI from environment/GCP helper settings, sets the
+experiment, enables `mlflow.sklearn.autolog(...)`, and records training under
+one parent run (`multi_model_search`) with nested per-model tuning runs.
+
+### MLflow Performance Tuning
+
+By default, the training harness logs up to **50 hyperparameter tuning runs per model**. For faster iteration during local development, you can reduce this:
+
+```bash
+# Log fewer tuning runs for faster uploads
+export MLFLOW_MAX_TUNING_RUNS=10
+just train
+
+# Or disable MLflow logging entirely for rapid prototyping
+export MLFLOW_TRACKING_URI=file:///tmp/mlruns_local
+just train
+```
+
+**Performance tips:**
+- **Default settings** (50 tuning runs, log_models=False): Balanced production use
+- **Fast iteration** (5-10 tuning runs, local file backend): ~10x faster for dev/testing
+- **Model artifacts**: Disabled in autolog (`log_models=False`) since trainers persist models locally to disk (no redundant uploads)
+
+## Model CI/CD Workflow
+
+The GitHub Actions workflow at `.github/workflows/model-cicd.yml` now runs a
+gate-driven CI/CD path using `training.cmd.run_model_cicd`.
+
+### CI/CD behavior
+
+- Push events run a model-impacting path filter (`scripts/ci/model_change_filter.sh`).
+- Non-model-impacting push events are skipped with an explicit reason in step summary.
+- Model-impacting push, scheduled, and manual runs:
+    1. Pull latest DVC data.
+    2. Train models (`training.cmd.train`).
+    3. Evaluate validation gate (R2/MAE thresholds).
+    4. Evaluate bias gate from generated bias reports.
+    5. Evaluate regression guardrail against production baseline (default max degradation 10%).
+    6. Promote to MLflow Production only if all gates pass and promotion is enabled.
+
+### Gate configuration environment variables
+
+- `MODEL_CICD_MIN_R2` (default `0.60`)
+- `MODEL_CICD_MAX_MAE` (default `20.0`)
+- `MODEL_CICD_MAX_BIAS_RELATIVE_GAP` (default `0.40`)
+- `MODEL_CICD_MAX_REGRESSION_DEGRADATION` (default `0.10`)
+- `MODEL_CICD_BIAS_SLICES` (default `repo,seniority`)
+
+### MLflow tracking configuration
+
+- Helper used by training scripts: `training.analysis.mlflow_config.configure_mlflow_from_env()`
+    - Resolution order:
+        1. `MLFLOW_TRACKING_URI`
+        2. `gcloud run services describe ...` when `MLFLOW_TRACKING_URI_FROM_GCP=true`
+        3. local filesystem fallback under `mlruns/`
+- `MLFLOW_TRACKING_URI`
+    - Explicit tracking URI override.
+    - Recommended for local scripts and CI for deterministic behavior.
+- `MLFLOW_TRACKING_URI_FROM_GCP`
+    - Optional (`true`/`false`, default `false`).
+    - When enabled and `MLFLOW_TRACKING_URI` is unset, scripts compute URI from Cloud Run.
+- `MLFLOW_CLOUD_RUN_SERVICE` (default `mlflow-tracking`)
+- `MLFLOW_GCP_REGION` (default `us-east1`)
+- `MLFLOW_GCP_PROJECT_ID` (optional; falls back to gcloud active project)
+- `MLFLOW_TRACKING_TOKEN`
+    - Optional for local filesystem tracking.
+    - Required for private Cloud Run tracking when IAM authentication is enabled.
+    - In GitHub Actions this should be an OIDC identity token minted with audience
+        equal to `MLFLOW_TRACKING_AUDIENCE` (Terraform output
+        `mlflow_tracking_audience`).
+
+Populate `.env` with the current Cloud Run endpoint (one-time write):
+
+```bash
+echo "MLFLOW_TRACKING_URI=$(gcloud run services describe mlflow-tracking \
+  --region us-east1 \
+  --project ticketforge-488020 \
+  --format='value(status.url)')" >> .env
+```
+
+Or configure automatic runtime lookup instead of storing a fixed URL:
+
+```bash
+cat >> .env <<'EOF'
+MLFLOW_TRACKING_URI_FROM_GCP=true
+MLFLOW_CLOUD_RUN_SERVICE=mlflow-tracking
+MLFLOW_GCP_REGION=us-east1
+MLFLOW_GCP_PROJECT_ID=ticketforge-488020
+EOF
+```
+
+### Dataset selection configuration
+
+- `TICKET_FORGE_DATASET_ID`
+    - Optional override to specify a particular dataset instead of using the latest.
+    - Can be a directory name (e.g., `github_issues-2026-02-24T200000Z`) or an absolute path.
+    - If relative, resolved relative to `data_root`.
+    - Must contain `tickets_transformed_improved.jsonl`.
+    - If unset, training defaults to the most recent timestamped pipeline output.
+
+Example: train using a specific dataset from a previous Airflow run:
+
+```bash
+# Using directory name relative to data/
+export TICKET_FORGE_DATASET_ID=github_issues-2026-02-24T194022Z
+just train
+
+# Or using absolute path
+export TICKET_FORGE_DATASET_ID=/path/to/data/github_issues-2026-02-24T194022Z
+just train
+```
+
+### New run artifacts
+
+Each CI run writes additional artifacts under `models/{run_id}/`:
+
+- `run_manifest.json` — machine-readable run metadata and gate outcomes
+- `gate_report.json` — contract-aligned gate and promotion decision payload
+- Existing model, eval, bias, and plot artifacts are still generated and uploaded
+
 
 ### Adding a New Model
 

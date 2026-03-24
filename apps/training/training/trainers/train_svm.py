@@ -53,7 +53,7 @@ def fit_grid_approx(
     cv=cv_split,
     scoring="neg_mean_squared_error",
     refit=True,
-    n_iter=50,
+    n_iter=1,  # TODO: revert to 50
     random_state=RANDOM_SEED,
     error_score="raise",  # type: ignore
   )

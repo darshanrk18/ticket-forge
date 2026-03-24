@@ -1,4 +1,3 @@
-
 /****************************************
 The following defines the
 IAM permissions and group
@@ -44,6 +43,12 @@ resource "google_service_account" "tf_apply" {
   display_name = "Terraform Apply Account"
 }
 
+resource "google_service_account" "ml_pipeline" {
+  account_id   = "ml-pipeline-sa"
+  display_name = "ML Pipeline Account"
+  description  = "Used by model-cicd workflow: reads/writes DVC bucket, accesses Postgres and secrets."
+}
+
 # 3. allow github to impersonate
 resource "google_service_account_iam_member" "tf_plan_impersonation" {
   service_account_id = google_service_account.tf_plan.name
@@ -53,6 +58,12 @@ resource "google_service_account_iam_member" "tf_plan_impersonation" {
 
 resource "google_service_account_iam_member" "tf_apply_impersonation" {
   service_account_id = google_service_account.tf_apply.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/${var.repository}"
+}
+
+resource "google_service_account_iam_member" "ml_pipeline_impersonation" {
+  service_account_id = google_service_account.ml_pipeline.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/${var.repository}"
 }
@@ -80,6 +91,12 @@ locals {
     "roles/resourcemanager.projectIamAdmin", # REQUIRED: To manage IAM bindings on the project
     "roles/serviceusage.serviceUsageAdmin"   # Enable APIs (google_project_service)
   ]
+
+  # MINIMAL: Roles for the ML Pipeline Service Account
+  ml_pipeline_roles = [
+    "roles/cloudsql.client",              # Connect to Postgres (Cloud SQL)
+    "roles/secretmanager.secretAccessor", # Read secrets (e.g. DB password)
+  ]
 }
 
 resource "google_project_iam_member" "tf_plan_permissions" {
@@ -98,6 +115,14 @@ resource "google_project_iam_member" "tf_apply_permissions" {
   member  = "serviceAccount:${google_service_account.tf_apply.email}"
 }
 
+resource "google_project_iam_member" "ml_pipeline_permissions" {
+  for_each = toset(local.ml_pipeline_roles)
+
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.ml_pipeline.email}"
+}
+
 resource "google_storage_bucket_iam_member" "tf_plan_state_access" {
   bucket = var.state_bucket
   role   = "roles/storage.objectViewer"
@@ -108,4 +133,11 @@ resource "google_storage_bucket_iam_member" "tf_apply_state_access" {
   bucket = var.state_bucket
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.tf_apply.email}"
+}
+
+# ML pipeline needs read/write on the DVC data bucket
+resource "google_storage_bucket_iam_member" "ml_pipeline_dvc_access" {
+  bucket = var.data_bucket
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.ml_pipeline.email}"
 }

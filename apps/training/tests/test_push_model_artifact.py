@@ -123,7 +123,7 @@ class TestPushModelArtifacts:
       mp.models_root = tmp_path
       uris = push_model_artifacts("test_run", dry_run=True)
 
-    assert len(uris) == 3
+    assert len(uris) == 4
     assert all(u.startswith("gs://ticketforge-dvc/models/test_run/") for u in uris)
 
   def test_dry_run_does_not_call_gcs(self, tmp_path: Path) -> None:
@@ -185,7 +185,7 @@ class TestPushModelArtifacts:
     manifest = json.loads(manifest_path.read_text())
     assert manifest["best_model"] == "random_forest"
     assert manifest["run_id"] == "test_run"
-    assert len(manifest["artifacts"]) == 3
+    assert len(manifest["artifacts"]) == 4
 
   def test_upload_called_for_each_artifact(self, tmp_path: Path) -> None:
     from training.analysis.push_model_artifact import push_model_artifacts
@@ -207,4 +207,4 @@ class TestPushModelArtifacts:
       mock_storage.Client.return_value = mock_client
       push_model_artifacts("test_run")
 
-    assert mock_blob.upload_from_filename.call_count == 3
+    assert mock_blob.upload_from_filename.call_count == 4

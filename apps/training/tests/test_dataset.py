@@ -135,7 +135,7 @@ class TestDatasetDummyLoading:
 
 class TestFindLatestPipelineOutput:
   def test_picks_most_recent_timestamped_dir(self, tmp_path):
-    from training.dataset import _find_latest_pipeline_output
+    from training.dataset import find_latest_pipeline_output
 
     older = tmp_path / "github_issues-2026-02-24T190000Z"
     newer = tmp_path / "github_issues-2026-02-24T200000Z"
@@ -147,12 +147,12 @@ class TestFindLatestPipelineOutput:
 
     with patch("training.dataset.Paths") as mock_paths:
       mock_paths.data_root = tmp_path
-      result = _find_latest_pipeline_output()
+      result = find_latest_pipeline_output()
 
     assert result == newer
 
   def test_skips_incomplete_timestamped_dir(self, tmp_path):
-    from training.dataset import _find_latest_pipeline_output
+    from training.dataset import find_latest_pipeline_output
 
     incomplete = tmp_path / "github_issues-2026-02-24T200000Z"
     complete = tmp_path / "github_issues-2026-02-24T190000Z"
@@ -163,12 +163,12 @@ class TestFindLatestPipelineOutput:
 
     with patch("training.dataset.Paths") as mock_paths:
       mock_paths.data_root = tmp_path
-      result = _find_latest_pipeline_output()
+      result = find_latest_pipeline_output()
 
     assert result == complete
 
   def test_falls_back_to_legacy_dir(self, tmp_path):
-    from training.dataset import _find_latest_pipeline_output
+    from training.dataset import find_latest_pipeline_output
 
     legacy = tmp_path / "github_issues"
     legacy.mkdir()
@@ -176,17 +176,93 @@ class TestFindLatestPipelineOutput:
 
     with patch("training.dataset.Paths") as mock_paths:
       mock_paths.data_root = tmp_path
-      result = _find_latest_pipeline_output()
+      result = find_latest_pipeline_output()
 
     assert result == legacy
 
   def test_raises_if_no_dir_found(self, tmp_path):
-    from training.dataset import _find_latest_pipeline_output
+    from training.dataset import find_latest_pipeline_output
 
     with patch("training.dataset.Paths") as mock_paths:
       mock_paths.data_root = tmp_path
       with pytest.raises(FileNotFoundError):
-        _find_latest_pipeline_output()
+        find_latest_pipeline_output()
+
+  def test_respects_dataset_id_override_relative_path(self, tmp_path):
+    from training.dataset import find_latest_pipeline_output
+
+    # Create a dataset with explicit name
+    dataset = tmp_path / "github_issues-2026-02-24T194022Z"
+    dataset.mkdir()
+    (dataset / "tickets_transformed_improved.jsonl").write_text("{}")
+
+    # Also create a newer one to ensure override takes precedence
+    newer = tmp_path / "github_issues-2026-02-24T200000Z"
+    newer.mkdir()
+    (newer / "tickets_transformed_improved.jsonl").write_text("{}")
+
+    with (
+      patch("training.dataset.Paths") as mock_paths,
+      patch("training.dataset.getenv_or") as mock_getenv,
+    ):
+      mock_paths.data_root = tmp_path
+      # Override to use the older dataset
+      mock_getenv.return_value = "github_issues-2026-02-24T194022Z"
+      result = find_latest_pipeline_output()
+
+    assert result == dataset
+
+  def test_respects_dataset_id_override_absolute_path(self, tmp_path):
+    from training.dataset import find_latest_pipeline_output
+
+    dataset = tmp_path / "github_issues-2026-02-24T194022Z"
+    dataset.mkdir()
+    (dataset / "tickets_transformed_improved.jsonl").write_text("{}")
+
+    with (
+      patch("training.dataset.Paths") as mock_paths,
+      patch("training.dataset.getenv_or") as mock_getenv,
+    ):
+      mock_paths.data_root = tmp_path
+      # Override with absolute path
+      mock_getenv.return_value = str(dataset)
+      result = find_latest_pipeline_output()
+
+    assert result == dataset
+
+  def test_raises_on_invalid_dataset_id_override(self, tmp_path):
+    from training.dataset import find_latest_pipeline_output
+
+    with (
+      patch("training.dataset.Paths") as mock_paths,
+      patch("training.dataset.getenv_or") as mock_getenv,
+    ):
+      mock_paths.data_root = tmp_path
+      # Override to non-existent dataset
+      mock_getenv.return_value = "github_issues-2026-02-24T999999Z"
+      with pytest.raises(FileNotFoundError) as exc_info:
+        find_latest_pipeline_output()
+
+      assert "Dataset override" in str(exc_info.value)
+
+  def test_dataset_id_override_missing_required_file(self, tmp_path):
+    from training.dataset import find_latest_pipeline_output
+
+    dataset = tmp_path / "github_issues-2026-02-24T194022Z"
+    dataset.mkdir()
+    # Create directory but without required file
+
+    with (
+      patch("training.dataset.Paths") as mock_paths,
+      patch("training.dataset.getenv_or") as mock_getenv,
+    ):
+      mock_paths.data_root = tmp_path
+      mock_getenv.return_value = "github_issues-2026-02-24T194022Z"
+      with pytest.raises(FileNotFoundError) as exc_info:
+        find_latest_pipeline_output()
+
+      assert "Dataset override" in str(exc_info.value)
+      assert "missing tickets_transformed_improved.jsonl" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

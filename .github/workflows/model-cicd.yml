@@ -1,0 +1,221 @@
+name: Model CI/CD
+
+on:
+  push:
+    branches: ["main"]
+  schedule:
+    # Run every Monday at 02:00 UTC
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: "Promote best model to Production in MLflow after training"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  train-and-promote:
+    name: Train / Run & Promote Best Model
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.run-meta.outputs.run_id }}
+      gate_report: ${{ steps.run-meta.outputs.gate_report }}
+      executed: ${{ steps.model-filter.outputs.should_run }}
+      skip_reason: ${{ steps.model-filter.outputs.reason }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check model-impacting changes
+        id: model-filter
+        shell: bash
+        run: |
+          bash scripts/ci/model_change_filter.sh
+
+      - name: Skip rationale
+        if: github.event_name == 'push' && steps.model-filter.outputs.should_run != 'true'
+        run: |
+          echo "Skipping model training: ${{ steps.model-filter.outputs.reason }}"
+          echo "### Model CI/CD Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "Reason: ${{ steps.model-filter.outputs.reason }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Set run metadata
+        id: run-meta
+        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        run: |
+          RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "gate_report=models/$RUN_ID/gate_report.json" >> "$GITHUB_OUTPUT"
+
+      - name: Install just
+        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        uses: taiki-e/install-action@just
+
+      - name: Setup uv
+        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        run: just install-deps
+
+      - name: Authenticate to Google Cloud
+        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: 'ml-pipeline-sa@${{ secrets.TF_VAR_PROJECT_ID }}.iam.gserviceaccount.com'
+
+      - name: Pull latest DVC data
+        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        run: dvc pull
+
+
+      - name: Run training and gate pipeline
+        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        run: |
+          PROMOTE="${{ github.event_name != 'workflow_dispatch' && 'true' || github.event.inputs.promote }}"
+          uv run -m training.cmd.run_model_cicd \
+            --runid "${{ steps.run-meta.outputs.run_id }}" \
+            --trigger "${{ github.event_name }}" \
+            --commit-sha "${{ github.sha }}" \
+            --snapshot-id "dvc-latest" \
+            --source-uri "dvc://data" \
+            --promote "$PROMOTE"
+        env:
+          # Enable automatic Cloud Run discovery (no secrets needed!)
+          MLFLOW_TRACKING_URI_FROM_GCP: "true"
+          MLFLOW_CLOUD_RUN_SERVICE: "mlflow-tracking"
+          MLFLOW_GCP_REGION: ${{ secrets.TF_VAR_REGION }}
+          MLFLOW_GCP_PROJECT_ID: ${{ secrets.TF_VAR_PROJECT_ID }}
+
+          # Fallback: if Cloud Run discovery fails, use explicit secret
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
+          # Gate tuning (optional)
+          MODEL_CICD_MIN_R2: "-1.0"                          # R² threshold (default: -1.0 = disabled)
+          MODEL_CICD_MAX_MAE: "40.0"                         # Mean Absolute Error threshold
+          MODEL_CICD_MAX_BIAS_RELATIVE_GAP: "0.70"           # Bias disparity tolerance
+          MODEL_CICD_MAX_REGRESSION_DEGRADATION: "0.10"      # % degradation vs production
+
+          MLFLOW_MAX_TUNING_RUNS: "5"                        # Hyperparameter tuning iterations (default: 50)
+          TICKET_FORGE_DATASET_ID: "github_issues-2026-03-24T092907Z"  # Optional: override dataset selection
+
+      - name: Upload model artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts-${{ github.run_id }}
+          path: |
+            models/
+            ${{ steps.run-meta.outputs.gate_report }}
+          retention-days: 30
+
+  notify:
+    name: Train / Send Status Email
+    needs: [train-and-promote]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download model artifacts
+        if: needs.train-and-promote.outputs.executed == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: model-artifacts-${{ github.run_id }}
+          path: .
+
+      - name: Send email notification
+        # Mirrors the body structure used by dags/email_callbacks.py:
+        # same GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD secrets, same
+        # SMTP_SSL approach, and same section headings (Status, Trigger,
+        # Run URL) so alerts are consistent across Airflow DAGs and CI/CD.
+        run: |
+          python3 - <<'EOF'
+          import os
+          import smtplib
+          from email.mime.text import MIMEText
+
+          status  = "${{ needs.train-and-promote.result }}"
+          trigger = "${{ github.event_name }}"
+          run_url = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          executed = "${{ needs.train-and-promote.outputs.executed }}"
+          skip_reason = "${{ needs.train-and-promote.outputs.skip_reason }}"
+          run_id = "${{ needs.train-and-promote.outputs.run_id }}"
+          is_success = status == "success"
+
+          gate_context = ""
+          gate_report_path = f"models/{run_id}/gate_report.json" if run_id else ""
+          if run_id and os.path.exists(gate_report_path):
+            try:
+              import json
+              with open(gate_report_path, encoding="utf-8") as f:
+                gate = json.load(f)
+              gate_context = (
+                f"Gate decision: {gate.get('promotion_decision', {}).get('decision', 'unknown')}\n"
+                f"Validation passed: {gate.get('validation_gate', {}).get('passed', False)}\n"
+                f"Bias passed: {gate.get('bias_gate', {}).get('passed', False)}\n"
+                f"Regression passed: {gate.get('regression_guardrail', {}).get('passed', False)}\n"
+                f"Reasons: {gate.get('promotion_decision', {}).get('reasons', [])}\n"
+              )
+            except Exception:
+              gate_context = "Gate decision: unreadable gate report\n"
+
+          if is_success:
+            subject = "[TicketForge] Model CI/CD Success: train-and-promote"
+          else:
+            subject = "[TicketForge] Model CI/CD Failure: train-and-promote"
+
+          body_lines = [
+            "Job:     train-and-promote",
+            f"Status:  {status.upper()}",
+            f"Trigger: {trigger}",
+            f"Run:     {run_url}",
+            f"Executed: {executed}",
+            f"Skip reason: {skip_reason}",
+            "",
+          ]
+
+          if gate_context:
+            body_lines += ["Gate Summary:", gate_context, ""]
+
+          if not is_success:
+            body_lines += [
+              "Error:",
+              f"  Job finished with status '{status}'. Check the run URL above for details.",
+              "",
+            ]
+
+          body = "\n".join(body_lines)
+
+          sender   = os.environ.get("GMAIL_APP_USERNAME")
+          password = os.environ.get("GMAIL_APP_PASSWORD")
+          if not sender or not password:
+            print("GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD not set — skipping notification")
+            raise SystemExit(0)
+
+          msg = MIMEText(f"<pre>{body}</pre>", "html")
+          msg["Subject"] = subject
+          msg["From"]    = sender
+          msg["To"]      = sender
+
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(sender, password)
+            smtp.sendmail(sender, [sender], msg.as_string())
+
+          print(f"Notification sent to {sender}")
+          EOF
+        env:
+          GMAIL_APP_USERNAME: ${{ secrets.GMAIL_APP_USERNAME }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        continue-on-error: true

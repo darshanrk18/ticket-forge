@@ -1,0 +1,12 @@
+.terraform/
+*.tfstate*
+*.tfvars
+.terraform.lock.hcl
+*.log
+.env*
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/
