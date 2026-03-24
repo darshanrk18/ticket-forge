@@ -64,9 +64,10 @@ def fit_grid(
     scoring="neg_mean_squared_error",
     refit=True,
     n_jobs=1,
-    n_iter=50,
+    n_iter=20,
     random_state=RANDOM_SEED,
     error_score="raise",  # type: ignore
+    verbose=2,
   )
 
   return grid.fit(x, y, sample_weight=sample_weight)

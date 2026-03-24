@@ -247,3 +247,6 @@ Thumbs.db
 *.tmp
 *.swp
 .idea/
+
+
+mlruns

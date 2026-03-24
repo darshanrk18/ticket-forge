@@ -22,6 +22,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import PredefinedSplit
 
 logger = get_logger(__name__)
+# Module-level cache for loaded records
+# Avoids re-reading 61k records from disk on every CV fold
+_records_cache: dict[str, list] = {}
+
 
 X_t = npt.NDArray[Any]
 Y_t = npt.NDArray[np.floating]
@@ -166,7 +170,10 @@ class Dataset(BaseModel):
     """
     pipeline_dir = find_latest_pipeline_output()
     jsonl_path = pipeline_dir / "tickets_transformed_improved.jsonl"
-    all_records = _load_jsonl(jsonl_path)
+    cache_key = str(jsonl_path)
+    if cache_key not in _records_cache:
+      _records_cache[cache_key] = _load_jsonl(jsonl_path)
+    all_records = _records_cache[cache_key]
 
     indices = _split_indices(len(all_records), self.split)
     records = [all_records[i] for i in indices]
@@ -298,6 +305,9 @@ class Dataset(BaseModel):
     records = self._load_records()
     raw = [r.get("completion_hours_business") for r in records]
     y = np.array(raw, dtype=np.float64)
+
+    # Replace negative values with NaN (data quality issue)
+    y[y < 0] = np.nan
 
     # Replace missing values with the column mean so the array is complete
     missing_mask = np.isnan(y)

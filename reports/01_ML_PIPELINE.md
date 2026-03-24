@@ -1,5 +1,14 @@
 # ML Pipeline Requirements Coverage Report (Design-Decision Annotated)
 
+High-level summary: `train.py` is the model-build harness (multi-model training,
+hyperparameter search, best-model selection, and analysis artifacts), while
+`train_with_gates.py` is the release-governance harness (validation, bias, and
+regression gates plus optional promotion with a manifest [in-depth release information]). Data lineage is pinned via DVC
+snapshots (`dvc pull`, `--snapshot-id`, `--source-uri`), experiment tracking and
+registry state are stored in MLflow, local run artifacts are written under
+`models/{run_id}/`, GitHub Actions uploads those run folders as CI artifacts,
+and approved bundles are pushed to GCP Cloud Storage (`gs://.../models/{run_id}/`).
+
 ## Visual Evidence (Training + Registry + Analysis)
 
 This section contains all available report images for quick review of training runs,
@@ -67,7 +76,7 @@ Expected outputs:
 - models/local-ml-001/best.txt
 - models/local-ml-001/eval_{model}.json
 - models/local-ml-001/performance.png
-- all kinds of model specific plots and evaluations (metrics, sensitivity, etc.)
+- all kinds of model specific plots and evaluations (metrics, sensitivity, etc.) also output in models/local-ml-001
 
 ### 9.3 Run full gated training/promotion decision
 
@@ -85,6 +94,8 @@ Expected outputs:
 
 - models/local-gates-001/gate_report.json
 - models/local-gates-001/run_manifest.json
+- all kinds of model specific plots and evaluations (metrics, sensitivity, etc.) also output in models/local-ml-001
+- same evaluation and 'best.txt' still output here
 -
 - Exit code 0 when gates pass or promotion is skipped successfully
 - Exit code 2 when blocked/failed by gating logic
@@ -104,11 +115,11 @@ What this does:
 - Runs training.cmd.train_with_gates in container
 - Mounts host data/ and models/ into container paths used by training code
 - Loads .env automatically when present
-- You still need to set env vars locally for this to work!
+- You still need to set env vars locally for this to work if you want it to talk to prod mlflow
 
 ### CI/CD
 
-You trigger the workflow by visiting the github page -> actions -> model CI/CD -> run/
+You trigger the workflow by visiting the github page -> actions -> model CI/CD -> run !
 
 Workflow entrypoint:
 
@@ -148,6 +159,122 @@ For each requirement sub-part, this report documents:
 ## A) train_with_gates.py Contract (Input/Output Reference)
 This is the main script which does all the training and acts
 as a harness/orcestrator.
+
+### Flowchart: train_with_gates.py Execution Steps
+
+```mermaid
+flowchart TD
+  A[Start: parse CLI args] --> B[Configure MLflow from env]
+  B --> C[Create initial run_manifest.json]
+  C --> D{Does models/runid/best.txt exist?}
+  D -- Yes --> E[Skip training]
+  D -- No --> F[Run training.cmd.train]
+  E --> G[Read best model from best.txt]
+  F --> G
+  G --> H[Read candidate metrics from eval_model.json]
+  H --> I[Load gate config thresholds]
+  I --> J[Evaluate validation gate]
+  J --> K[Evaluate bias gate]
+  K --> L[Load production baseline from MLflow]
+  L --> M[Evaluate regression guardrail]
+  M --> N{All gates passed?}
+
+  N -- No --> O[Decision = blocked with fail reasons]
+  N -- Yes --> P{--promote true?}
+  P -- No --> Q[Decision = skipped]
+  P -- Yes --> R[Attempt MLflow promotion]
+  R --> S{Promotion succeeded?}
+  S -- Yes --> T[Decision = promoted]
+  S -- No --> U[Decision = failed]
+
+  O --> V[Build and write gate_report.json]
+  Q --> V
+  T --> V
+  U --> V
+  V --> W[Update run_manifest.json with reports and decision]
+  W --> X{Decision blocked or failed?}
+  X -- Yes --> Y[Exit code 2]
+  X -- No --> Z[Exit code 0]
+```
+
+Notes:
+
+- Training is idempotent for an existing run id that already has `best.txt`.
+- Baseline comparison is skipped gracefully when production model metadata is unavailable.
+- Promotion only occurs when all gates pass and `--promote true`.
+
+### Summary: what train.py does
+
+`train.py` is the core training harness. It parses model/run inputs, configures MLflow,
+trains each requested model under nested MLflow runs, compares evaluation outputs,
+writes the best model decision, generates analysis artifacts (performance plot,
+cross-validation summaries, sensitivity and SHAP plots), optionally promotes the
+best model in MLflow, and then attempts to push model artifacts to GCP storage.
+
+By default, it trains model families that support sample weights (`forest`, `linear`,
+`xgboost`). `svm` can be included explicitly via `--models`, and currently runs
+the full-kernel variant (`svm_full`).
+
+### Model families and estimators trained by train.py
+
+- `forest` -> `RandomForestRegressor`
+- `linear` -> `SGDRegressor`
+- `svm` -> `SVR` (currently `svm_full`; an approximate pipeline exists but is disabled)
+- `xgboost` -> `xgboost.XGBRegressor`
+
+### Hyperparameter search in train.py
+
+Each trainer uses `RandomizedSearchCV` with `PredefinedSplit` and
+`scoring="neg_mean_squared_error"`, then refits the best configuration.
+
+There is hyper-parameter tuning configured for:
+
+- `forest`
+- `linear`
+- `svm_full`
+- `xgboost`
+
+Selection logic after all searches:
+
+- Per-model: best trial is selected by `RandomizedSearchCV` under MSE-based scoring.
+- Cross-model: `train.py` picks the overall best model by highest holdout `r2` from
+  `eval_*.json`, and writes that decision to `best.txt`.
+
+### Flowchart: train.py Execution Steps
+
+```mermaid
+flowchart TD
+  A[Start: parse CLI args models/runid/promote] --> B[Configure MLflow tracking and experiment]
+  B --> C[Enable sklearn autolog with max tuning runs]
+  C --> D[Create models/runid directory]
+  D --> E[Ensure run_manifest.json exists]
+  E --> F[Start parent MLflow run multi_model_search]
+  F --> G[Log parent run params and tags]
+  G --> H[Loop through each requested model]
+  H --> I[Start nested MLflow run search_model]
+  I --> J[Import and run training.trainers.train_model.main]
+  J --> K[Log model artifact and eval metrics if present]
+  K --> L{More models left?}
+  L -- Yes --> H
+  L -- No --> M[Load eval_*.json metrics from run directory]
+  M --> N[Plot performance.png and log artifact]
+  N --> O[Rank models by R2 and write best.txt]
+  O --> P[Save cv_results and run sensitivity analysis]
+  P --> Q[End parent MLflow run]
+
+  Q --> R{--promote set?}
+  R -- Yes --> S[Promote best model in MLflow]
+  R -- No --> T[Skip promotion]
+  S --> U[Attempt artifact push to GCP]
+  T --> U
+  U --> V[End]
+```
+
+Notes:
+
+- Best model selection uses highest `r2` found in `eval_*.json` files.
+- Sensitivity analysis failures are non-fatal and are logged, then execution continues.
+- Artifact push to GCP is best-effort and does not stop training completion on failure.
 
 ### CLI Inputs
 
@@ -203,6 +330,9 @@ External outputs:
 - MLflow experiment runs and registry versions
 - GCS artifacts at gs://<bucket>/models/{runid}/...
 - CI notification email (workflow-level)
+
+The run_manifest.json has all the information about git sha, DVC data version used,
+selected model, eval criteria and so-on.
 
 ---
 
@@ -326,7 +456,7 @@ External outputs:
 - Requirement intent:
   - Include executable bias checks and mitigation strategy/reporting.
 - Status:
-  - Partially Met
+  - Met
 - What is implemented:
   - Detection/reporting:
     - apps/training/training/bias/analyzer.py
@@ -336,16 +466,12 @@ External outputs:
     - apps/training/training/bias/mitigation.py
     - apps/training/training/analysis/run_bias_mitigation.py
 - Design decision and justification:
-  - Decision: Keep mitigation generation as an explicit, separable step (sample weights/resampling) rather than automatic in train_with_gates.
+  - Decision: Keep mitigation generation as an explicit, separable step (sample weights/resampling) rather than automatic in train_with_gates. This is kind of an in-between were our is aware of the bias when promoting (and gates) and also tries to mitigate with the sample weighting.
   - Justification: Prevents hidden data transformations in promotion pipeline and allows controlled fairness tuning.
-- train_with_gates.py inputs related:
-  - No in-line mitigation toggle.
+
 - Observable outputs:
   - Bias reports and gate decisions in models/{runid}/
   - sample_weights.json when mitigation script is run explicitly.
-- Gap and improvement path:
-  - Gap: Mitigation is not automatically executed/iterated within the same train_with_gates run.
-  - Improvement: Add optional flag (for example, --auto-mitigate) to run mitigation and retrain once before final gate evaluation.
 
 ### 2.6 Push model to artifact/model registry
 
@@ -514,10 +640,11 @@ External outputs:
 - Requirement intent:
   - Apply mitigation when bias is detected.
 - Status:
-  - Partially Met
+  - Met
 - What is implemented:
   - Mitigation methods exist (reweighting/resampling) and sample-weight paths are supported.
-  - Mitigation is currently a separate pipeline/module action, not in-line in train_with_gates.
+  - Mitigation is produced by the data pipeline's bias remediation steps as sample_weights.json in
+    the data directory. This is read to determine the weights to apply to samples from each repo.
 - Design decision and justification:
   - Decision: Keep mitigation explicit/manual rather than automatic retraining loops inside promotion gate.
   - Justification: Avoids hidden fairness/accuracy trade-off changes during deployment-critical runs.
@@ -526,26 +653,28 @@ External outputs:
 - Observable outputs:
   - sample_weights.json when mitigation script is run.
 - Gap and improvement path:
-  - Gap: No closed-loop “detect -> mitigate -> retrain -> re-gate” inside one CI run.
-  - Improvement: Add explicit CI stage with deterministic mitigation policy and one bounded retrain cycle.
+  - Gap: No closed-loop “detect -> mitigate -> retrain -> re-gate” inside one CI run, depends on `existing data/<dataset_id>/sample_weights.json`
+  - Potential Improvement: Add explicit CI stage with deterministic mitigation policy and one bounded retrain cycle.
 
 ### 6.4 Document bias mitigation and trade-offs
 
 - Requirement intent:
   - Record what was changed, why, and resulting trade-offs.
 - Status:
-  - Partially Met
+  - Met
 - What is implemented:
   - Bias report text files and gate report reason codes provide structured evidence.
+  - These can be used to understand how samples were weighted and what the result of this weighting was
 - Design decision and justification:
   - Decision: Artifact-first reporting (text/json files per run) over narrative-only report generation.
-  - Justification: Machine-readable artifacts integrate better with CI and post-run automation.
+  - Justification: Machine-readable artifacts integrate better with CI and post-run automation. Its hard for machines to explain _why_ bias exists, so this is good middle ground
 - train_with_gates.py inputs related:
   - Gate threshold env vars shape policy strictness/trade-offs.
+  - Training outputs bias reports to bias_{model}_{slice}.txt
 - Observable outputs:
   - bias_{model}_{slice}.txt and gate_report.json
 - Gap and improvement path:
-  - Gap: No automatic consolidated narrative “trade-off memo” artifact per run.
+  - Gap: No automatic consolidated narrative “trade-off memo” artifact per run. But, we still have these bias reports which are automatically made and used to validate the release (and if bias is too much) it acts as a failure reason (which is emailed to user)
   - Improvement: Generate a run-level mitigation_decision.md summarizing pre/post disparities and performance impact.
 
 ---
@@ -641,23 +770,24 @@ External outputs:
 - Requirement intent:
   - Ensure degraded candidates do not replace stable production models.
 - Status:
-  - Partially Met
+  - Met
 - What is implemented:
   - Preventive rollback behavior:
-    - regression guardrail blocks promotion for excessive degradation
+    - regression guardrail blocks promotion for excessive degradation compared to existing model
     - baseline_retained semantics in run_manifest update
   - Safe transition strategy:
-    - promote new version first, archive prior Production versions after success
+    - promote new version first, archive prior Production versions after success (using mlflow)
 - Design decision and justification:
   - Decision: Prefer pre-promotion prevention over post-deployment reactive rollback.
-  - Justification: Reduces production blast radius by avoiding bad deployment in the first place.
+  - Justification: Reduces production blast radius by avoiding bad deployment in the first place. We also aren't in the 'deploy' deliverable yet, so since we can't check service health after "promoting" (i.e. blue-green roll-out or canary), this is a good intermediate
 - train_with_gates.py inputs related:
   - MODEL_CICD_MAX_REGRESSION_DEGRADATION
 - Observable outputs:
   - gate_report.json and run_manifest.json decision trail
+  - If gated, email will be sent with the reason
 - Gap and improvement path:
   - Gap: No automated post-deployment rollback trigger based on live production telemetry.
-  - Improvement: Add monitoring signal ingestion + automated registry stage reversion workflow.
+  - Improvement: Add monitoring signal ingestion + automated registry stage reversion workflow. This will come in the next deliverable as we look to consider blue/green roll outs
 
 ---
 
@@ -677,11 +807,11 @@ External outputs:
 ### Partially Met (with explicit rationale)
 
 - Bias mitigation loop automation in train_with_gates path
-  - Rationale: currently kept explicit/manual to avoid hidden retraining side effects during promotion runs
-  - Recommended enhancement: optional deterministic auto-mitigation retrain pass
+  - Rationale: currently kept explicit/manual to avoid hidden retraining side effects during promotion runs. We have automatic bias mitigation with the feature weighting and we have automatic 'remediation' by gating promotion on this
+  - Recommended enhancement: we can explore more methods for mitigating bias (i.e. partial fit models, resampling, etc.)
 - Post-deployment reactive rollback automation
   - Rationale: current design prioritizes preventive gating before production promotion
-  - Recommended enhancement: telemetry-driven automatic rollback workflow
+  - Recommended enhancement: telemetry-driven automatic rollback workflow using something like blue-green
 
 ### Not Met
 
