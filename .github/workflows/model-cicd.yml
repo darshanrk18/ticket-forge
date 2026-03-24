@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Check model-impacting changes
         id: model-filter
@@ -84,7 +86,7 @@ jobs:
         if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
         run: |
           PROMOTE="${{ github.event_name != 'workflow_dispatch' && 'true' || github.event.inputs.promote }}"
-          uv run -m training.cmd.run_model_cicd \
+          just train-with-gates \
             --runid "${{ steps.run-meta.outputs.run_id }}" \
             --trigger "${{ github.event_name }}" \
             --commit-sha "${{ github.sha }}" \

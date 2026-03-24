@@ -41,8 +41,12 @@ if [[ -n "${CHANGED_FILES_OVERRIDE:-}" ]]; then
   changed_files="$CHANGED_FILES_OVERRIDE"
 elif [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
   changed_files="$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")"
+elif git rev-parse HEAD~1 &>/dev/null; then
+  changed_files="$(git diff --name-only HEAD~1 HEAD)"
 else
-  changed_files="$(git diff --name-only HEAD~1 HEAD || true)"
+  # Single commit repo or shallow clone - can't determine previous commit.
+  # Default to running training to be conservative.
+  changed_files=" "
 fi
 
 if [[ -z "$changed_files" ]]; then
