@@ -106,6 +106,11 @@ MLFLOW_TRACKING_AUDIENCE=${terraform output -raw mlflow_tracking_audience}
 ...
 ```
 
+The `ml-pipeline-sa` service account is granted `roles/run.viewer` by Terraform
+so CI can resolve `MLFLOW_TRACKING_URI` via:
+
+`gcloud run services describe mlflow-tracking --region <region> --format=value(status.url)`
+
 ## MLflow Access Model (POC)
 
 The current POC deployment exposes the Cloud Run MLflow endpoint publicly

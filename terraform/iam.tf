@@ -96,6 +96,7 @@ locals {
   ml_pipeline_roles = [
     "roles/cloudsql.client",              # Connect to Postgres (Cloud SQL)
     "roles/secretmanager.secretAccessor", # Read secrets (e.g. DB password)
+    "roles/run.viewer",                   # Read Cloud Run service metadata (status.url)
   ]
 }
 
