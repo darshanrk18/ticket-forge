@@ -11,6 +11,27 @@ This module defines docker images for running the application.
 └── base.Dockerfile     # Base docker image for any Python app in /apps
 ```
 
+## Run Training Gates in Docker
+
+Use the helper script from repo root:
+
+```bash
+scripts/ci/train_with_gates_docker.sh \
+        --runid local-1 \
+        --trigger workflow_dispatch \
+        --commit-sha "$(git rev-parse HEAD)" \
+        --snapshot-id dvc-latest \
+        --source-uri dvc://data \
+        --promote false
+```
+
+What it does:
+
+- Builds an image from `docker/base.Dockerfile` with `APP_NAME=training`.
+- Runs `python -m training.cmd.train_with_gates ...` inside the container.
+- Mounts host `data/` to `/app/data` and `models/` to `/app/models`.
+- Loads `.env` (if present) and passes common MLflow/gate environment variables.
+
 ## Airflow Local Run
 
 Airflow runs from the **root** `docker-compose.yml` to avoid duplicate Postgres definitions.

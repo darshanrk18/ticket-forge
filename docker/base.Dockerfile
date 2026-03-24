@@ -46,6 +46,7 @@ ENV APP_NAME=${APP_NAME}
 # Install tesseract-ocr and language data
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        git \
         tesseract-ocr \
         tesseract-ocr-eng \
         libleptonica-dev \

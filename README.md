@@ -52,7 +52,9 @@ Each workspace has its own README with detailed setup and usage instructions:
 
 ## Reports
 
-- [**ML pipeline report**](./reports/00_ML_PIPELINE.md) - Report and setup notes for the ticket ETL pipeline
+- [**Data pipeline report**](./reports/00_DATA_PIPELINE.md) - Report and setup notes for the ticket ETL pipeline
+- [**ML pipeline report**](./reports/01_ML_PIPELINE.md) - Report and setup notes for the ticket ETL pipeline
+
 
 ## Installation
 

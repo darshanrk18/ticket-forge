@@ -50,7 +50,7 @@ Data Collected:
 - Open + Unassigned: 2,640 (backlog)
 - Assignment Timestamps: 7,265 captured (11.9%)
 
-Raw output gets stored in `data/github_issues/all_tickets.json`. The cleaned and transformed data is in `tickets_transformed_improved.jsonl`. 
+Raw output gets stored in `data/github_issues/all_tickets.json`. The cleaned and transformed data is in `tickets_transformed_improved.jsonl`.
 The `data/` directory is tracked in DVC and also shared via OneDrive: [Submission 2 - Data Pipeline - Relevant Files](https://northeastern-my.sharepoint.com/:f:/r/personal/saxena_same_northeastern_edu/Documents/Ticket-Forge/Submission%202%20-%20Data%20Pipeline%20-%20Relevant%20Files?csf=1&web=1&e=EjH7hG)
 
 Airflow outputs are stored in timestamped dataset containers. Example runs include [data/github_issues-2026-02-24T204631Z](../data/github_issues-2026-02-24T204631Z) with ~30,000 samples and [data/github_issues-2026-02-24T201901Z](../data/github_issues-2026-02-24T201901Z) with 17,842 tickets from the new pipeline. These containers include the full artifact set (transformed data, anomaly report, bias report, sample weights, and schema/profile outputs). The older [data/github_issues](../data/github_issues) dataset does not include bias reports, while the timestamped runs do.
@@ -327,14 +327,14 @@ Resume ETL DAG:
 
 ## 7 Data Schema & Statistics Generation
 
-The project uses two complementary approaches. 
+The project uses two complementary approaches.
 
-Custom SchemaValidator (libs/ml-core/ml_core/anomaly/validator.py) 
+Custom SchemaValidator (libs/ml-core/ml_core/anomaly/validator.py)
 - Validates a DataFrame against a declared expected schema (column presence, type checking for str/int/float)
 - Can auto-infer a schema from live data via generate_schema_from_data().
 - Generate descriptive statistics per run like row/column counts, numeric stats (mean, std, min, max, missing count), and categorical value distributions via generate_statistics().
 
-GreatExpectationsValidator  (libs/ml-core/ml_core/anomaly/ge_validator.py) 
+GreatExpectationsValidator  (libs/ml-core/ml_core/anomaly/ge_validator.py)
 - Auto-generates an ExpectationSuite called ticket_data_suite from the first batch of data
 - Persists it to JSON via save_schema()
 - Runs formal ValidationDefinition checks on subsequent batches, reporting total vs. failed expectations.

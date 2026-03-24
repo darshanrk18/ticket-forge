@@ -72,11 +72,14 @@ resource "google_service_account_iam_member" "ml_pipeline_impersonation" {
 locals {
   # READ-ONLY: Roles for the Planning Service Account
   plan_roles = [
-    "roles/viewer",               # Generic read access to most resources
-    "roles/iam.securityReviewer", # View IAM policies (critical for diffing IAM)
-    "roles/storage.objectViewer", # View GCS objects (if using data sources)
-    "roles/container.viewer",     # Specific view access for GKE
-    "roles/run.viewer"            # Specific view access for Cloud Run
+    "roles/viewer",                  # Generic read access to most resources
+    "roles/iam.securityReviewer",    # View IAM policies (critical for diffing IAM)
+    "roles/storage.objectViewer",    # View GCS objects (if using data sources)
+    "roles/container.viewer",        # Specific view access for GKE
+    "roles/run.viewer",              # Specific view access for Cloud Run
+    "roles/artifactregistry.reader", # Read Artifact Registry repositories
+    "roles/cloudsql.viewer",         # Read Cloud SQL instances and metadata
+    "roles/secretmanager.viewer"     # Read Secret Manager secret metadata (not payload)
   ]
 
   # WRITE/ADMIN: Roles for the Apply Service Account

@@ -98,8 +98,7 @@ jobs:
         with:
           name: model-artifacts-${{ github.run_id }}
           path: |
-            models/
-            ${{ steps.run-meta.outputs.gate_report }}
+            models/${{ steps.run-meta.outputs.run_id }}/
           retention-days: 30
 
   notify:
