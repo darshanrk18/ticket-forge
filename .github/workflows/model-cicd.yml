@@ -90,7 +90,6 @@ jobs:
           MODEL_CICD_MAX_REGRESSION_DEGRADATION: "0.10"      # % degradation vs production
 
           MLFLOW_MAX_TUNING_RUNS: "5"                        # Hyperparameter tuning iterations (default: 50)
-          TICKET_FORGE_DATASET_ID: "github_issues-2026-03-13T175520Z"  # Optional: override dataset selection
 
       - name: Upload model artifacts
         if: always()
