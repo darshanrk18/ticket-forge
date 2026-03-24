@@ -26,8 +26,7 @@ jobs:
     outputs:
       run_id: ${{ steps.run-meta.outputs.run_id }}
       gate_report: ${{ steps.run-meta.outputs.gate_report }}
-      executed: ${{ steps.model-filter.outputs.should_run }}
-      skip_reason: ${{ steps.model-filter.outputs.reason }}
+      executed: ${{ github.event_name != 'push' || steps.model-filter.outputs.models == 'true' }}
 
     steps:
       - name: Checkout
@@ -36,54 +35,63 @@ jobs:
           fetch-depth: 2
 
       - name: Check model-impacting changes
+        uses: dorny/paths-filter@v1
         id: model-filter
-        shell: bash
-        run: |
-          bash scripts/ci/model_change_filter.sh
+        with:
+          filters: |
+            models:
+              - 'apps/training/**'
+              - 'libs/ml-core/**'
+              - 'libs/shared/**'
+              - 'dags/**'
+              - 'data.dvc'
+              - 'models.dvc'
+              - 'pyproject.toml'
+              - 'Justfile'
 
       - name: Skip rationale
-        if: github.event_name == 'push' && steps.model-filter.outputs.should_run != 'true'
+        if: github.event_name == 'push' && steps.model-filter.outputs.models != 'true'
         run: |
-          echo "Skipping model training: ${{ steps.model-filter.outputs.reason }}"
+          echo "Skipping model training: no model-impacting changes detected"
           echo "### Model CI/CD Skipped" >> $GITHUB_STEP_SUMMARY
-          echo "Reason: ${{ steps.model-filter.outputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "Reason: No model-impacting changes detected" >> $GITHUB_STEP_SUMMARY
 
       - name: Set run metadata
         id: run-meta
-        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        if: github.event_name != 'push' || steps.model-filter.outputs.models == 'true'
         run: |
           RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}"
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "gate_report=models/$RUN_ID/gate_report.json" >> "$GITHUB_OUTPUT"
 
       - name: Install just
-        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        if: github.event_name != 'push' || steps.model-filter.outputs.models == 'true'
         uses: taiki-e/install-action@just
 
       - name: Setup uv
-        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        if: github.event_name != 'push' || steps.model-filter.outputs.models == 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
       - name: Install dependencies
-        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        if: github.event_name != 'push' || steps.model-filter.outputs.models == 'true'
         run: just install-deps
 
       - name: Authenticate to Google Cloud
-        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        if: github.event_name != 'push' || steps.model-filter.outputs.models == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
           service_account: 'ml-pipeline-sa@${{ secrets.TF_VAR_PROJECT_ID }}.iam.gserviceaccount.com'
 
       - name: Pull latest DVC data
-        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        if: github.event_name != 'push' || steps.model-filter.outputs.models == 'true'
         run: dvc pull
 
 
       - name: Run training and gate pipeline
-        if: github.event_name != 'push' || steps.model-filter.outputs.should_run == 'true'
+        if: github.event_name != 'push' || steps.model-filter.outputs.models == 'true'
         run: |
           PROMOTE="${{ github.event_name != 'workflow_dispatch' && 'true' || github.event.inputs.promote }}"
           just train-with-gates \
@@ -152,7 +160,6 @@ jobs:
           trigger = "${{ github.event_name }}"
           run_url = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           executed = "${{ needs.train-and-promote.outputs.executed }}"
-          skip_reason = "${{ needs.train-and-promote.outputs.skip_reason }}"
           run_id = "${{ needs.train-and-promote.outputs.run_id }}"
           is_success = status == "success"
 
@@ -184,7 +191,6 @@ jobs:
             f"Trigger: {trigger}",
             f"Run:     {run_url}",
             f"Executed: {executed}",
-            f"Skip reason: {skip_reason}",
             "",
           ]
 

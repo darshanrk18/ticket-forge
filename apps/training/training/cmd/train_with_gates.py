@@ -158,7 +158,7 @@ def main() -> int:
     source_uri=args.source_uri,
   )
 
-  if run_dir.exists():
+  if (run_dir / "best.txt").exists():
     logger.warning("RUN_ID already exists, skipping training")
   else:
     _run_training(run_id)
