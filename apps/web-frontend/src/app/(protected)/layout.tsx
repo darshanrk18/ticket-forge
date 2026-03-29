@@ -2,6 +2,10 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { LogOut } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Nav } from "@/components/shared/nav";
 import { useAuth } from "@/lib/auth-context";
 
 export default function ProtectedLayout({
@@ -9,7 +13,7 @@ export default function ProtectedLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, logout } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -28,5 +32,18 @@ export default function ProtectedLayout({
 
   if (!user) return null;
 
-  return <>{children}</>;
+  return (
+    <>
+      <Nav showAuth={false}>
+        <span className="text-sm text-muted-foreground">
+          {user.first_name} {user.last_name}
+        </span>
+        <Button variant="ghost" size="sm" onClick={logout}>
+          <LogOut className="mr-1.5 size-3.5" />
+          Logout
+        </Button>
+      </Nav>
+      {children}
+    </>
+  );
 }

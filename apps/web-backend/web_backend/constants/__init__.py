@@ -9,8 +9,19 @@ from web_backend.constants.auth import (
     TOKEN_TYPE_ACCESS,
     TOKEN_TYPE_REFRESH,
 )
+from web_backend.constants.projects import (
+    DEFAULT_BOARD_COLUMNS,
+    MANAGEMENT_ROLES,
+    MAX_BOARD_COLUMNS,
+    MAX_PROJECT_NAME_LENGTH,
+    MAX_SLUG_LENGTH,
+    ROLE_ADMIN,
+    ROLE_MEMBER,
+    ROLE_OWNER,
+)
 
 __all__ = [
+    # Auth
     "ACCESS_TOKEN_EXPIRE_MINUTES",
     "BCRYPT_ROUNDS",
     "REFRESH_COOKIE_NAME",
@@ -18,4 +29,13 @@ __all__ = [
     "TOKEN_ALGORITHM",
     "TOKEN_TYPE_ACCESS",
     "TOKEN_TYPE_REFRESH",
+    # Projects
+    "DEFAULT_BOARD_COLUMNS",
+    "MANAGEMENT_ROLES",
+    "MAX_BOARD_COLUMNS",
+    "MAX_PROJECT_NAME_LENGTH",
+    "MAX_SLUG_LENGTH",
+    "ROLE_ADMIN",
+    "ROLE_MEMBER",
+    "ROLE_OWNER",
 ]
