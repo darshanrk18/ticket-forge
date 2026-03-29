@@ -1,29 +1,52 @@
-"""Main FastAPI application."""
+"""FastAPI application entry point.
 
-import os
+Mounts versioned API routers, attaches middleware, and manages
+the database lifecycle via the lifespan context manager.
+"""
 
-from dotenv import load_dotenv
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
-from pydantic import BaseModel
 
-from web_backend.routes.resumes import router as coldstart_router
-
-load_dotenv()
-
-print("DATABASE_URL:", os.environ.get("DATABASE_URL"))
-
-app = FastAPI(title="TicketForge Web Backend")
-
-app.include_router(coldstart_router, prefix="/api/v1")
+from web_backend.api.v1.router import router as v1_router
+from web_backend.database import close_db, init_db
+from web_backend.middleware.cors import add_cors_middleware
 
 
-class ReadResponse(BaseModel):
-    """Response model for the root endpoint."""
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup: create tables. Shutdown: close DB pool."""
+    await init_db()
+    yield
+    await close_db()
 
-    message: str
+
+app = FastAPI(
+    title="TicketForge",
+    description="AI-powered ticket assignment system",
+    version="0.2.0",
+    lifespan=lifespan,
+)
+
+# Middleware
+add_cors_middleware(app)
+
+# Versioned API routes (auth, etc.)
+app.include_router(v1_router)
+
+# Legacy routes (resume upload → Airflow)
+# Imported conditionally — depends on services/airflow.py
+# which was lost during restructure. Restore from git later.
+try:
+    from web_backend.routes.resumes import router as coldstart_router
+
+    app.include_router(coldstart_router, prefix="/api/v1")
+except ImportError:
+    pass
 
 
-@app.get("/")
-def read_root() -> ReadResponse:
-    """Return a simple greeting from the TicketForge backend."""
-    return ReadResponse(message="Hello from TicketForge!")
+@app.get("/health")
+async def health_check() -> dict[str, str]:
+    """Simple health check endpoint."""
+    return {"status": "ok"}
