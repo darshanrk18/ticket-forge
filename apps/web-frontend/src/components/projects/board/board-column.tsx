@@ -17,6 +17,7 @@ interface BoardColumnProps {
   index: number;
   isLast: boolean;
   onCreateTicket: (columnId: string, title: string) => void;
+  onTicketClick: (ticketId: string) => void;
 }
 
 export function BoardColumn({
@@ -24,6 +25,7 @@ export function BoardColumn({
   index,
   isLast,
   onCreateTicket,
+  onTicketClick,
 }: BoardColumnProps) {
   return (
     <div className="flex w-[272px] shrink-0 flex-col">
@@ -37,7 +39,6 @@ export function BoardColumn({
             {column.tickets.length}
           </span>
         )}
-        {/* Show sparkle on last column (Done) like Jira */}
         {isLast && (
           <Sparkles className="size-3.5 text-muted-foreground/40" />
         )}
@@ -56,11 +57,15 @@ export function BoardColumn({
             }`}
           >
             {column.tickets.map((ticket, idx) => (
-              <BoardCard key={ticket.id} ticket={ticket} index={idx} />
+              <BoardCard
+                key={ticket.id}
+                ticket={ticket}
+                index={idx}
+                onClick={onTicketClick}
+              />
             ))}
             {provided.placeholder}
 
-            {/* Empty state */}
             {column.tickets.length === 0 && !snapshot.isDraggingOver && (
               <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-muted-foreground/15 py-8">
                 <p className="text-xs text-muted-foreground/40">

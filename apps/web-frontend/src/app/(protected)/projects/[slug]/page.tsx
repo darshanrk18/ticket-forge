@@ -3,12 +3,10 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   Filter,
   Loader2,
   Search,
   Settings,
-  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -59,11 +57,18 @@ export default function ProjectDetailPage() {
 
   if (!project) return null;
 
+  const memberColors = [
+    "#6366f1",
+    "#06b6d4",
+    "#10b981",
+    "#f59e0b",
+    "#ef4444",
+  ];
+
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden">
-      {/* Project sub-header */}
+      {/* Breadcrumb */}
       <div className="border-b px-6 py-2.5">
-        {/* Breadcrumb */}
         <div className="flex items-center gap-1.5 text-[13px]">
           <Link
             href="/dashboard"
@@ -76,10 +81,9 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Board toolbar */}
+      {/* Toolbar */}
       <div className="flex items-center justify-between border-b px-6 py-2">
         <div className="flex items-center gap-3">
-          {/* Search */}
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -88,47 +92,35 @@ export default function ProjectDetailPage() {
             />
           </div>
 
-          {/* Member avatars filter */}
-          <div className="flex items-center">
-            <div className="flex -space-x-1.5">
-              {project.members.slice(0, 4).map((member, idx) => {
-                const colors = [
-                  "#6366f1",
-                  "#06b6d4",
-                  "#10b981",
-                  "#f59e0b",
-                  "#ef4444",
-                ];
-                return (
-                  <button
-                    key={member.id}
-                    className="flex size-7 items-center justify-center rounded-full border-2 border-background text-[10px] font-semibold text-white transition-transform hover:scale-110 hover:z-10"
-                    style={{ backgroundColor: colors[idx % colors.length] }}
-                    title={`${member.first_name} ${member.last_name}`}
-                  >
-                    {member.first_name[0]}
-                    {member.last_name[0]}
-                  </button>
-                );
-              })}
-              {project.members.length > 4 && (
-                <div className="flex size-7 items-center justify-center rounded-full border-2 border-background bg-muted text-[10px] font-medium text-muted-foreground">
-                  +{project.members.length - 4}
-                </div>
-              )}
-            </div>
+          <div className="flex -space-x-1.5">
+            {project.members.slice(0, 4).map((member, idx) => (
+              <button
+                key={member.id}
+                className="flex size-7 items-center justify-center rounded-full border-2 border-background text-[10px] font-semibold text-white transition-transform hover:z-10 hover:scale-110"
+                style={{
+                  backgroundColor: memberColors[idx % memberColors.length],
+                }}
+                title={`${member.first_name} ${member.last_name}`}
+              >
+                {member.first_name[0]}
+                {member.last_name[0]}
+              </button>
+            ))}
+            {project.members.length > 4 && (
+              <div className="flex size-7 items-center justify-center rounded-full border-2 border-background bg-muted text-[10px] font-medium text-muted-foreground">
+                +{project.members.length - 4}
+              </div>
+            )}
           </div>
 
           <Separator orientation="vertical" className="h-5" />
 
-          {/* Filter */}
           <Button variant="ghost" size="sm" className="h-8 text-[13px]">
             <Filter className="mr-1.5 size-3.5" />
             Filter
           </Button>
         </div>
 
-        {/* Right side */}
         <div className="flex items-center gap-2">
           {canManage && (
             <Link href={`/projects/${slug}/settings`}>
@@ -141,11 +133,12 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Board area */}
+      {/* Board */}
       <div className="flex-1 overflow-x-auto overflow-y-hidden bg-background p-5">
         <BoardView
           projectSlug={slug}
           boardColumns={project.board_columns}
+          members={project.members}
         />
       </div>
     </div>
