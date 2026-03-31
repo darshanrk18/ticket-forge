@@ -59,6 +59,8 @@ jobs:
           service_account: 'ml-pipeline-sa@${{ secrets.TF_VAR_PROJECT_ID }}.iam.gserviceaccount.com'
 
       - name: Pull latest DVC data
+        env:
+          DVC_NO_ANALYTICS: "true"
         run: dvc pull
 
 
