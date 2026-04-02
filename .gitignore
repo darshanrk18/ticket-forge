@@ -249,6 +249,7 @@ Thumbs.db
 *.tmp
 *.swp
 .idea/
-
+ticketforge-venv/
+diff_output.txt
 
 mlruns

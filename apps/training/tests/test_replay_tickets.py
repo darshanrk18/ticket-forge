@@ -25,6 +25,7 @@ from training.etl.postload.replay_tickets import (
 
 
 _ASSIGNMENT_DEFAULTS: dict[str, object] = {
+  "assignment_id": "00000000-0000-0000-0000-000000000001",
   "ticket_id": "T-1",
   "title": "Fix the widget",
   "description": "The widget was broken due to python error",
@@ -41,6 +42,7 @@ def _make_assignment(**overrides: object) -> ClosedTicketAssignment:
 
 
 DB_ROW_KEYS = [
+  "assignment_id",
   "ticket_id",
   "title",
   "description",
@@ -53,6 +55,7 @@ DB_ROW_KEYS = [
 def _row_dict(assignment: ClosedTicketAssignment) -> dict:
   """Convert a ClosedTicketAssignment to a dict like RealDictCursor returns."""
   return {
+    "assignment_id": assignment.assignment_id,
     "ticket_id": assignment.ticket_id,
     "title": assignment.title,
     "description": assignment.description,
@@ -161,6 +164,11 @@ class TestReplaySingle:
       c for c in mock_cursor.execute.call_args_list if "UPDATE users" in str(c)
     ]
     assert len(update_calls) == 1
+    replay_marker_calls = [
+      c for c in mock_cursor.execute.call_args_list if "UPDATE assignments" in str(c)
+    ]
+    assert len(replay_marker_calls) == 1
+    assert replay_marker_calls[0][0][1] == (assignment.assignment_id,)
 
     # Verify the alpha / (1-alpha) / ticket_id values passed to SQL
     sql_args = update_calls[0][0][1]  # positional args tuple
@@ -276,10 +284,33 @@ class TestFetchQuery:
     assert "ANY" in sql
     assert "ORDER BY" in sql
     assert "ASC" in sql
+    assert "a.replayed_at IS NULL" in sql
 
     # Verify the ticket IDs were passed as the parameter
     sql_args = select_call[0][1]
     assert sql_args == (["T-1", "T-2"],)
+
+  @patch("training.etl.postload.replay_tickets.psycopg2")
+  def test_replay_skips_assignments_already_marked_replayed(
+    self, mock_pg: MagicMock
+  ) -> None:
+    """Already replayed assignments are filtered out by the fetch query."""
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+    mock_conn.cursor.return_value = mock_cursor
+    mock_pg.connect.return_value = mock_conn
+
+    replayer = TicketReplayer(dsn="postgresql://x")
+    count = replayer.replay(["T-1"])
+
+    assert count == 0
+    update_calls = [
+      c
+      for c in mock_cursor.execute.call_args_list
+      if "UPDATE users" in str(c) or "UPDATE assignments" in str(c)
+    ]
+    assert update_calls == []
 
 
 # ------------------------------------------------------------------ #

@@ -60,6 +60,7 @@ DEFAULT_ALPHA = 0.95
 class ClosedTicketAssignment:
   """One row from the closed-tickets-with-assignments query."""
 
+  assignment_id: str
   ticket_id: str
   title: str
   description: str
@@ -122,6 +123,7 @@ class TicketReplayer:
     cur.execute(
       """
       SELECT
+        a.assignment_id,
         t.ticket_id,
         t.title,
         t.description,
@@ -133,6 +135,7 @@ class TicketReplayer:
         JOIN users u       ON u.member_id = a.engineer_id
       WHERE t.ticket_id = ANY(%s)
         AND t.status = 'closed'
+        AND a.replayed_at IS NULL
       ORDER BY t.updated_at ASC
       """,
       (ticket_ids,),
@@ -140,6 +143,7 @@ class TicketReplayer:
     rows = cur.fetchall()
     return [
       ClosedTicketAssignment(
+        assignment_id=str(r["assignment_id"]),
         ticket_id=r["ticket_id"],
         title=r["title"],
         description=r["description"],
@@ -172,6 +176,21 @@ class TicketReplayer:
       keywords_text=keywords_text,
     )
     cur.execute(sql, params)
+
+  @staticmethod
+  def _mark_assignment_replayed(
+    cur: RealDictCursor,
+    assignment: ClosedTicketAssignment,
+  ) -> None:
+    """Mark a replayed assignment so future DAG runs skip it."""
+    cur.execute(
+      """
+      UPDATE assignments
+      SET replayed_at = now()
+      WHERE assignment_id = %s
+      """,
+      (assignment.assignment_id,),
+    )
 
   # ------------------------------------------------------------------ #
   #  Public API
@@ -214,6 +233,7 @@ class TicketReplayer:
 
       for idx, assignment in enumerate(assignments, start=1):
         self._apply_ticket_update(cur, assignment)
+        self._mark_assignment_replayed(cur, assignment)
 
         if idx % 100 == 0 or idx == total:
           logger.info(

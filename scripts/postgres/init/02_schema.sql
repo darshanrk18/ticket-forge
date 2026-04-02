@@ -71,11 +71,13 @@ CREATE TABLE IF NOT EXISTS assignments (
   ticket_id            TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
   engineer_id          BIGINT NOT NULL REFERENCES users(member_id) ON DELETE CASCADE,
   assigned_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  replayed_at          TIMESTAMPTZ,
   UNIQUE(ticket_id, engineer_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_assignments_ticket_id ON assignments(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_engineer_id ON assignments(engineer_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_assigned_at ON assignments(assigned_at);
+CREATE INDEX IF NOT EXISTS idx_assignments_replayed_at ON assignments(replayed_at);
 
 COMMENT ON TABLE assignments IS 'Tracks ticket assignments to engineers for profile updates and learning.';

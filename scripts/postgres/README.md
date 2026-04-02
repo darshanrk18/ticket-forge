@@ -14,11 +14,11 @@ The init scripts in `init/` run automatically on first start and create the exte
 
 ## Connection
 
-- **Host:** localhost  
-- **Port:** 5432  
-- **User:** ticketforge  
-- **Password:** ticketforge  
-- **Database:** ticketforge  
+- **Host:** localhost
+- **Port:** 5432
+- **User:** ticketforge
+- **Password:** ticketforge
+- **Database:** ticketforge
 
 ```bash
 psql -h localhost -U ticketforge -d ticketforge
@@ -62,6 +62,7 @@ Tracks ticket-to-engineer assignments for profile updates.
 | `ticket_id` | TEXT (FK) | References `tickets.ticket_id` |
 | `engineer_id` | UUID (FK) | References `users.member_id` |
 | `assigned_at` | TIMESTAMPTZ | Assignment timestamp |
+| `replayed_at` | TIMESTAMPTZ | Timestamp set after the assignment has been applied to profile replay |
 
 ## Indexes
 
@@ -69,6 +70,7 @@ Tracks ticket-to-engineer assignments for profile updates.
 - **Full-text indexes (GIN):** `skill_keywords`, `title`, `description` for hybrid search
 - **JSONB index (GIN):** `labels` for filtering by tags
 - **Foreign keys:** Proper referential integrity on assignments
+- **Replay tracking index:** `replayed_at` supports idempotent closed-ticket replay
 
 ## Scripts
 
@@ -80,18 +82,18 @@ Tracks ticket-to-engineer assignments for profile updates.
 
 See `example_queries.sql` for:
 
-1. Insert user with resume/profile vectors and skill keywords  
-2. Insert ticket with vector and JSONB labels  
-3. Create assignment  
-4. Semantic search (vector similarity)  
-5. Lexical search (full-text on skill keywords)  
-6. **Hybrid search with RRF** (Reciprocal Rank Fusion)  
-7. Update profile vector (moving average with decay)  
-8. Update skill keywords from closed tickets  
-9. Query tickets by JSONB labels  
-10. Assignment history  
-11. Aggregate statistics  
-12. Table row counts  
+1. Insert user with resume/profile vectors and skill keywords
+2. Insert ticket with vector and JSONB labels
+3. Create assignment
+4. Semantic search (vector similarity)
+5. Lexical search (full-text on skill keywords)
+6. **Hybrid search with RRF** (Reciprocal Rank Fusion)
+7. Update profile vector (moving average with decay)
+8. Update skill keywords from closed tickets
+9. Query tickets by JSONB labels
+10. Assignment history
+11. Aggregate statistics
+12. Table row counts
 
 ## Hybrid Search
 
