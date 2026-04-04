@@ -46,7 +46,7 @@ from training.dataset import find_latest_pipeline_output
 
 logger = get_logger(__name__)
 models = {"forest", "svm", "xgboost", "lgbm"}
-models_with_sample_weight = models.difference(set(["svm"]))
+models_with_sample_weight = models.difference(set(["svm", "lgbm"]))
 
 
 def _ensure_run_manifest(run_id: str) -> None:

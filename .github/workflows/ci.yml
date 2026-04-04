@@ -187,6 +187,23 @@ jobs:
         with:
           project_id: ${{ secrets.TF_VAR_PROJECT_ID }}
 
+      - name: Bootstrap required tf-apply IAM roles
+        run: |
+          set -euo pipefail
+
+          tf_apply_member="serviceAccount:tf-apply-sa@${{ secrets.TF_VAR_PROJECT_ID }}.iam.gserviceaccount.com"
+
+          for role in \
+            roles/iap.tunnelResourceAccessor \
+            roles/servicenetworking.networksAdmin \
+            roles/compute.osAdminLogin
+          do
+            gcloud projects add-iam-policy-binding "${{ secrets.TF_VAR_PROJECT_ID }}" \
+              --member="${tf_apply_member}" \
+              --role="${role}" \
+              --quiet
+          done
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 

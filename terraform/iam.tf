@@ -85,6 +85,7 @@ locals {
   # WRITE/ADMIN: Roles for the Apply Service Account
   apply_roles = [
     "roles/compute.admin",                   # Manage VM instances, Disks, Networks
+    "roles/compute.osAdminLogin",            # IAP SSH/OS Login access for instance troubleshooting and tunnel fallbacks
     "roles/container.admin",                 # Manage GKE Clusters
     "roles/run.admin",                       # Manage Cloud Run Services
     "roles/artifactregistry.admin",          # Manage Artifact Registry repositories/images

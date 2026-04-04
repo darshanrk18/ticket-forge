@@ -34,7 +34,6 @@ proxy_probe_timeout_seconds="${CLOUD_SQL_PSQL_PROBE_TIMEOUT:-5}"
 relay_local_port="${CLOUD_SQL_RELAY_LOCAL_PORT:-15432}"
 relay_proxy_script=""
 relay_ssh_tunnel_pid=""
-airflow_service_was_running=0
 db_port="5432"
 
 case "${cloud_sql_proxy_ip_type}" in
@@ -59,15 +58,6 @@ fi
 cleanup() {
   kill "${proxy_pid:-}" 2>/dev/null || true
   kill "${relay_ssh_tunnel_pid:-}" 2>/dev/null || true
-
-  if [[ "${airflow_service_was_running}" -eq 1 ]]; then
-    gcloud compute ssh \
-      --project="${TF_VAR_project_id}" \
-      --zone="${airflow_vm_zone}" \
-      --tunnel-through-iap \
-      "${airflow_vm_name}" \
-      --command='sudo systemctl start airflow' >/dev/null 2>&1 || true
-  fi
 
   rm -f "${proxy_log}" "${probe_log}" "${relay_proxy_script}"
 }
@@ -105,17 +95,6 @@ probe_database() {
 }
 
 start_relay_proxy() {
-  if [[ "${airflow_service_was_running}" -eq 0 ]]; then
-    if gcloud compute ssh \
-      --project="${TF_VAR_project_id}" \
-      --zone="${airflow_vm_zone}" \
-      --tunnel-through-iap \
-      "${airflow_vm_name}" \
-      --command='sudo systemctl is-active --quiet airflow && sudo systemctl stop airflow'; then
-      airflow_service_was_running=1
-    fi
-  fi
-
   relay_proxy_script="$(mktemp -t ticketforge-cloud-sql-relay.XXXXXX.sh)"
   cat >"${relay_proxy_script}" <<EOF
 #!/usr/bin/env bash

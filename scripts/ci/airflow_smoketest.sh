@@ -33,6 +33,83 @@ cleanup() {
 
 trap cleanup EXIT
 
+set_local_urls() {
+  AIRFLOW_URL="http://127.0.0.1:${AIRFLOW_IAP_LOCAL_PORT}"
+  HEALTH_URL="${AIRFLOW_URL%/}/health"
+  DAGS_URL="${AIRFLOW_URL%/}/api/v1/dags"
+}
+
+wait_for_tunnel_ready() {
+  local i=0
+  while (( i < AIRFLOW_IAP_READY_WAIT_ATTEMPTS )); do
+    i=$((i + 1))
+
+    if curl --silent --max-time 2 "http://127.0.0.1:${AIRFLOW_IAP_LOCAL_PORT}/health" >/dev/null 2>&1; then
+      set_local_urls
+      return 0
+    fi
+
+    if [[ -n "$tunnel_pid" ]] && ! kill -0 "$tunnel_pid" >/dev/null 2>&1; then
+      return 1
+    fi
+
+    sleep 1
+  done
+
+  return 1
+}
+
+stop_tunnel_if_running() {
+  if [[ -n "$tunnel_pid" ]] && kill -0 "$tunnel_pid" >/dev/null 2>&1; then
+    kill "$tunnel_pid" >/dev/null 2>&1 || true
+  fi
+  tunnel_pid=""
+}
+
+start_direct_iap_tunnel() {
+  gcloud compute start-iap-tunnel "$AIRFLOW_IAP_INSTANCE" 8080 \
+    --zone "$AIRFLOW_IAP_ZONE" \
+    --local-host-port="127.0.0.1:${AIRFLOW_IAP_LOCAL_PORT}" \
+    >/tmp/airflow_iap_tunnel.log 2>&1 &
+  tunnel_pid=$!
+
+  if wait_for_tunnel_ready; then
+    echo "IAP tunnel ready; using ${AIRFLOW_URL}"
+    return 0
+  fi
+
+  stop_tunnel_if_running
+
+  if [[ -f /tmp/airflow_iap_tunnel.log ]]; then
+    tail -n 20 /tmp/airflow_iap_tunnel.log || true
+  fi
+
+  return 1
+}
+
+start_ssh_iap_tunnel() {
+  gcloud compute ssh "$AIRFLOW_IAP_INSTANCE" \
+    --zone "$AIRFLOW_IAP_ZONE" \
+    --tunnel-through-iap \
+    --quiet \
+    -- -N -L "127.0.0.1:${AIRFLOW_IAP_LOCAL_PORT}:127.0.0.1:8080" \
+    >/tmp/airflow_iap_ssh_tunnel.log 2>&1 &
+  tunnel_pid=$!
+
+  if wait_for_tunnel_ready; then
+    echo "IAP SSH tunnel ready; using ${AIRFLOW_URL}"
+    return 0
+  fi
+
+  stop_tunnel_if_running
+
+  if [[ -f /tmp/airflow_iap_ssh_tunnel.log ]]; then
+    tail -n 20 /tmp/airflow_iap_ssh_tunnel.log || true
+  fi
+
+  return 1
+}
+
 host_from_url() {
   local url="$1"
   local without_scheme="${url#*://}"
@@ -63,38 +140,13 @@ start_iap_tunnel_if_needed() {
     start_attempt=$((start_attempt + 1))
     echo "Detected private Airflow URL (${host}); starting IAP tunnel via ${AIRFLOW_IAP_INSTANCE}/${AIRFLOW_IAP_ZONE} (attempt ${start_attempt}/${AIRFLOW_IAP_START_MAX_ATTEMPTS})"
 
-    gcloud compute start-iap-tunnel "$AIRFLOW_IAP_INSTANCE" 8080 \
-      --zone "$AIRFLOW_IAP_ZONE" \
-      --local-host-port="127.0.0.1:${AIRFLOW_IAP_LOCAL_PORT}" \
-      >/tmp/airflow_iap_tunnel.log 2>&1 &
-    tunnel_pid=$!
-
-    local i=0
-    while (( i < AIRFLOW_IAP_READY_WAIT_ATTEMPTS )); do
-      i=$((i + 1))
-      if curl --silent --max-time 2 "http://127.0.0.1:${AIRFLOW_IAP_LOCAL_PORT}/health" >/dev/null 2>&1; then
-        AIRFLOW_URL="http://127.0.0.1:${AIRFLOW_IAP_LOCAL_PORT}"
-        HEALTH_URL="${AIRFLOW_URL%/}/health"
-        DAGS_URL="${AIRFLOW_URL%/}/api/v1/dags"
-        echo "IAP tunnel ready; using ${AIRFLOW_URL}"
-        return 0
-      fi
-
-      if ! kill -0 "$tunnel_pid" >/dev/null 2>&1; then
-        echo "IAP tunnel process exited unexpectedly"
-        break
-      fi
-
-      sleep 1
-    done
-
-    if [[ -n "$tunnel_pid" ]] && kill -0 "$tunnel_pid" >/dev/null 2>&1; then
-      kill "$tunnel_pid" >/dev/null 2>&1 || true
+    if start_direct_iap_tunnel; then
+      return 0
     fi
-    tunnel_pid=""
 
-    if [[ -f /tmp/airflow_iap_tunnel.log ]]; then
-      tail -n 20 /tmp/airflow_iap_tunnel.log || true
+    echo "Direct IAP port tunnel failed; trying SSH-over-IAP tunnel fallback"
+    if start_ssh_iap_tunnel; then
+      return 0
     fi
 
     if (( start_attempt < AIRFLOW_IAP_START_MAX_ATTEMPTS )); then

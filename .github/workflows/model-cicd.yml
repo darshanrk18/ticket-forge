@@ -72,6 +72,12 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
           service_account: 'ml-pipeline-sa@${{ secrets.TF_VAR_PROJECT_ID }}.iam.gserviceaccount.com'
 
+      - name: Pull DVC-tracked training dataset
+        run: |
+          dvc pull data.dvc
+        env:
+          DVC_NO_ANALYTICS: "true"
+
       - name: Run training and gate pipeline
         run: |
           PROMOTE="${{ github.event_name != 'workflow_dispatch' && 'true' || github.event.inputs.promote }}"
@@ -79,12 +85,9 @@ jobs:
             --runid "${{ steps.run-meta.outputs.run_id }}" \
             --trigger "${{ github.event_name }}" \
             --commit-sha "${{ github.sha }}" \
-            --source-uri "gcs" \
+            --source-uri "dvc" \
             --promote "$PROMOTE"
         env:
-          # Cloud dataset source (index.json + current_dataset pointer)
-          GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME || format('gs://ticket-forge-training-artifacts-{0}-prod', secrets.TF_VAR_PROJECT_ID) }}
-
           # Enable automatic Cloud Run discovery (no secrets needed!)
           MLFLOW_TRACKING_URI_FROM_GCP: "true"
           MLFLOW_CLOUD_RUN_SERVICE: "mlflow-tracking"
