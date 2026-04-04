@@ -88,6 +88,7 @@ locals {
     "roles/container.admin",                 # Manage GKE Clusters
     "roles/run.admin",                       # Manage Cloud Run Services
     "roles/artifactregistry.admin",          # Manage Artifact Registry repositories/images
+    "roles/iap.tunnelResourceAccessor",      # Access VM tunnels over IAP (gcloud --tunnel-through-iap)
     "roles/servicenetworking.networksAdmin", # Manage Private Service Connect / VPC peering for managed services
     "roles/cloudsql.admin",                  # Manage Cloud SQL instances/databases/users
     "roles/secretmanager.admin",             # Manage Secret Manager secrets/versions/iam
@@ -147,6 +148,14 @@ resource "google_storage_bucket_iam_member" "tf_apply_state_access" {
 resource "google_storage_bucket_iam_member" "ml_pipeline_dvc_access" {
   bucket = var.data_bucket
   role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.ml_pipeline.email}"
+}
+
+# ML pipeline also needs read access to training artifacts bucket for
+# cloud dataset mode (index.json and dataset objects).
+resource "google_storage_bucket_iam_member" "ml_pipeline_training_read" {
+  bucket = google_storage_bucket.training_artifacts.name
+  role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.ml_pipeline.email}"
 }
 
