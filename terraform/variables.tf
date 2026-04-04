@@ -38,6 +38,12 @@ variable "mlflow_service_name" {
   default     = "mlflow-tracking"
 }
 
+variable "shared_cloud_sql_instance_name" {
+  description = "Cloud SQL instance name shared by MLflow, Airflow, and ticketforge databases (import existing instance before first apply when reusing one)."
+  type        = string
+  default     = "mlflow-tracking-sql"
+}
+
 variable "mlflow_server_image" {
   description = "Optional explicit container image for MLflow server. If null, Terraform uses Artifact Registry path <region>-docker.pkg.dev/<project>/mlflow-repo/mlflow-gcp:<tag>."
   type        = string
@@ -74,6 +80,26 @@ variable "mlflow_image_tag" {
   }
 }
 
+variable "mlflow_db_tier" {
+  description = "Cloud SQL machine tier for MLflow backend store."
+  type        = string
+  default     = "db-g1-small"
+}
+
+variable "cloud_sql_max_connections" {
+  description = "Optional Postgres max_connections override for the shared Cloud SQL instance. Leave null to use Cloud SQL tier defaults."
+  type        = number
+  default     = 500
+  nullable    = true
+
+  validation {
+    condition = var.cloud_sql_max_connections == null || (
+      var.cloud_sql_max_connections >= 20 && var.cloud_sql_max_connections <= 5000
+    )
+    error_message = "cloud_sql_max_connections must be null or between 20 and 5000."
+  }
+}
+
 variable "mlflow_db_name" {
   description = "Cloud SQL database name used by MLflow backend store."
   type        = string
@@ -86,14 +112,153 @@ variable "mlflow_db_user" {
   default     = "mlflow"
 }
 
-variable "mlflow_db_tier" {
-  description = "Cloud SQL machine tier for MLflow backend store."
-  type        = string
-  default     = "db-custom-1-3840"
-}
-
 variable "mlflow_additional_invokers" {
   description = "Extra Cloud Run invoker members for MLflow (e.g. user:you@example.com)."
   type        = list(string)
   default     = []
+}
+
+variable "environment" {
+  description = "Deployment environment for naming and labeling."
+  type        = string
+  default     = "prod"
+
+  validation {
+    condition     = contains(["prod"], var.environment)
+    error_message = "environment must be one of:prod." // Add staging sometime in the future?
+  }
+}
+
+variable "zone" {
+  description = "Compute Engine zone for the Airflow VM."
+  type        = string
+  default     = "us-east1-b"
+}
+
+variable "airflow_vm_machine_type" {
+  description = "Machine type for the Airflow Compute Engine VM."
+  type        = string
+  default     = "e2-medium"
+}
+
+variable "airflow_vm_disk_size_gb" {
+  description = "Boot disk size for the Airflow VM in GB."
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.airflow_vm_disk_size_gb >= 20
+    error_message = "airflow_vm_disk_size_gb must be >= 20."
+  }
+}
+
+variable "airflow_repo_ref" {
+  description = "Git ref (branch, tag, or commit SHA) checked out on the Airflow VM during deploy."
+  type        = string
+  default     = "main"
+}
+
+variable "airflow_version" {
+  description = "Apache Airflow version installed natively on the Airflow VM."
+  type        = string
+  default     = "2.10.4"
+}
+
+variable "airflow_github_token_secret_id" {
+  description = "Secret Manager secret id containing the GitHub token used by Airflow runtime."
+  type        = string
+  default     = "airflow-github-token-prod"
+}
+
+variable "airflow_gmail_app_username_secret_id" {
+  description = "Secret Manager secret id containing the Gmail app username used by Airflow SMTP config."
+  type        = string
+  default     = "airflow-gmail-app-username-prod"
+}
+
+variable "airflow_gmail_app_password_secret_id" {
+  description = "Secret Manager secret id containing the Gmail app password used by Airflow SMTP config."
+  type        = string
+  default     = "airflow-gmail-app-password-prod"
+}
+
+variable "airflow_webserver_secret_key_secret_id" {
+  description = "Secret Manager secret id containing Airflow webserver secret key used for session/CSRF signing."
+  type        = string
+  default     = "airflow-webserver-secret-key-prod"
+}
+
+variable "airflow_webserver_secret_key" {
+  description = "Optional explicit Airflow webserver secret key. If null, Terraform generates a strong key and stores it in Secret Manager."
+  type        = string
+  default     = null
+  sensitive   = true
+  nullable    = true
+}
+
+variable "airflow_admin_username" {
+  description = "Default Airflow admin username."
+  type        = string
+  default     = "airflow"
+}
+
+variable "airflow_admin_password" {
+  description = "Optional Airflow admin password. If null, fetched from Secret Manager."
+  type        = string
+  default     = null
+  sensitive   = true
+  nullable    = true
+}
+
+variable "airflow_db_name" {
+  description = "Cloud SQL database name for Airflow metadata."
+  type        = string
+  default     = "airflow"
+}
+
+variable "airflow_db_user" {
+  description = "Cloud SQL user for Airflow metadata database."
+  type        = string
+  default     = "airflow"
+}
+
+variable "airflow_db_password" {
+  description = "Optional Cloud SQL password for airflow_db_user. If null, fetched from Secret Manager."
+  type        = string
+  default     = null
+  sensitive   = true
+  nullable    = true
+}
+
+variable "ticketforge_db_name" {
+  description = "Cloud SQL database name for ticket-forge application tables."
+  type        = string
+  default     = "ticketforge"
+}
+
+variable "ticketforge_db_user" {
+  description = "Cloud SQL user for ticket-forge application tables."
+  type        = string
+  default     = "ticketforge"
+}
+
+variable "ticketforge_db_password" {
+  description = "Optional Cloud SQL password for ticketforge_db_user. If null, fetched from Secret Manager."
+  type        = string
+  default     = null
+  sensitive   = true
+  nullable    = true
+}
+
+variable "training_bucket_name" {
+  description = "Cloud Storage bucket for training datasets and artifacts."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "enable_terraform_state_bucket" {
+  description = "Whether to create the Terraform state bucket with this configuration."
+  type        = bool
+  default     = true
 }

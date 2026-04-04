@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sudo apt-get update -y
+sudo apt-get install -y git curl python3 python3-venv python3-pip
+
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_UNMANAGED_INSTALL=/usr/local/bin sh
+fi
+
+if ! id -u airflow >/dev/null 2>&1; then
+  sudo useradd --system --create-home --home-dir /opt/airflow --shell /bin/bash airflow
+fi
+
+if [ ! -d /opt/ticket-forge/.git ]; then
+  sudo mkdir -p /opt/ticket-forge
+  sudo chown -R airflow:airflow /opt/ticket-forge
+  sudo -u airflow git clone "https://github.com/${repository}.git" /opt/ticket-forge
+else
+  cd /opt/ticket-forge
+  sudo -u airflow git fetch --all --prune
+fi
+
+cd /opt/ticket-forge
+sudo -u airflow git checkout -f "${repository_ref}"
+sudo -u airflow git reset --hard "${repository_ref}"
+
+sudo mkdir -p /opt/ticket-forge/dags
+sudo mkdir -p /opt/ticket-forge/data
+sudo mkdir -p /opt/ticket-forge/models
+sudo mkdir -p /opt/airflow/logs
+sudo chown -R airflow:airflow /opt/ticket-forge /opt/airflow
+
+if [ ! -x /opt/ticket-forge/.venv/bin/python ]; then
+  sudo -u airflow /usr/local/bin/uv venv /opt/ticket-forge/.venv --python 3.12
+fi
+
+CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${airflow_version}/constraints-3.12.txt"
+
+sudo -u airflow /usr/local/bin/uv pip install --python /opt/ticket-forge/.venv/bin/python --upgrade pip setuptools wheel
+sudo -u airflow /usr/local/bin/uv pip install --python /opt/ticket-forge/.venv/bin/python "apache-airflow[postgres]==${airflow_version}" --constraint "$${CONSTRAINT_URL}"
+sudo -u airflow /usr/local/bin/uv pip install --python /opt/ticket-forge/.venv/bin/python \
+  -e /opt/ticket-forge/libs/shared \
+  -e /opt/ticket-forge/libs/ml-core \
+  -e /opt/ticket-forge/apps/training
+sudo -u airflow /usr/local/bin/uv pip check --python /opt/ticket-forge/.venv/bin/python
+
+get_secret_value() {
+  local secret_id="$1"
+  if [ -z "$secret_id" ]; then
+    echo ""
+    return 0
+  fi
+
+  local access_token
+  access_token=$(curl -sf -H "Metadata-Flavor: Google" \
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+    | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+  curl -sf -H "Authorization: Bearer $${access_token}" \
+    "https://secretmanager.googleapis.com/v1/projects/${gcp_project}/secrets/$${secret_id}/versions/latest:access" \
+    | python3 -c "import base64,json,sys; resp=json.load(sys.stdin); print(base64.b64decode(resp['payload']['data']).decode('utf-8'), end='')"
+}
+
+export GITHUB_TOKEN="$(get_secret_value '${github_token_secret_id}')"
+export GMAIL_APP_USERNAME="$(get_secret_value '${gmail_app_username_secret_id}')"
+export GMAIL_APP_PASSWORD="$(get_secret_value '${gmail_app_password_secret_id}')"
+export AIRFLOW_WEBSERVER_SECRET_KEY="$(get_secret_value '${airflow_webserver_secret_key_secret_id}')"
+
+if [ -z "$${AIRFLOW_WEBSERVER_SECRET_KEY}" ]; then
+  echo "Failed to load Airflow webserver secret key from Secret Manager" >&2
+  exit 1
+fi
+
+sudo tee /etc/default/airflow-runtime > /dev/null <<EOF
+AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=${db_connection}
+DATABASE_URL=${app_db_connection}
+AIRFLOW__CORE__DAGS_FOLDER=${dags_folder}
+AIRFLOW__CORE__LOAD_EXAMPLES=False
+AIRFLOW__CORE__EXECUTOR=LocalExecutor
+AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=false
+AIRFLOW__WEBSERVER__EXPOSE_CONFIG=False
+AIRFLOW__WEBSERVER__SECRET_KEY=$${AIRFLOW_WEBSERVER_SECRET_KEY}
+AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.session,airflow.api.auth.backend.basic_auth
+AIRFLOW_ADMIN_USERNAME=${airflow_username}
+AIRFLOW_ADMIN_PASSWORD=${airflow_password}
+GCS_BUCKET_NAME=gs://${gcs_bucket}
+GOOGLE_CLOUD_PROJECT=${gcp_project}
+GOOGLE_CLOUD_REGION=${gcp_region}
+PYTHONUNBUFFERED=1
+AIRFLOW__EMAIL__EMAIL_BACKEND=airflow.utils.email.send_email_smtp
+AIRFLOW__EMAIL__EMAIL_CONN_ID=smtp_default
+AIRFLOW__SMTP__SMTP_HOST=smtp.gmail.com
+AIRFLOW__SMTP__SMTP_PORT=587
+AIRFLOW__SMTP__SMTP_USER=$${GMAIL_APP_USERNAME}
+AIRFLOW__SMTP__SMTP_PASSWORD=$${GMAIL_APP_PASSWORD}
+AIRFLOW__SMTP__SMTP_MAIL_FROM=$${GMAIL_APP_USERNAME}
+AIRFLOW__SMTP__SMTP_STARTTLS=True
+AIRFLOW__SMTP__SMTP_SSL=False
+AIRFLOW__SMTP__SMTP_TIMEOUT=30
+AIRFLOW__SMTP__RETRY_LIMIT=5
+GITHUB_TOKEN=$${GITHUB_TOKEN}
+GMAIL_APP_USERNAME=$${GMAIL_APP_USERNAME}
+GMAIL_APP_PASSWORD=$${GMAIL_APP_PASSWORD}
+AIRFLOW_HOME=/opt/airflow
+PYTHONPATH=/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared
+EOF
+sudo chown root:airflow /etc/default/airflow-runtime
+sudo chmod 0640 /etc/default/airflow-runtime
+
+sudo tee /opt/ticket-forge/scripts/run_airflow.sh > /dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+set -a
+source /etc/default/airflow-runtime
+set +a
+
+source /opt/ticket-forge/.venv/bin/activate
+cd /opt/ticket-forge
+
+MAX_RETRIES=30
+RETRY_COUNT=0
+while ! airflow db check >/dev/null 2>&1; do
+  RETRY_COUNT=$((RETRY_COUNT + 1))
+  if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then
+    echo "ERROR: Database failed to become ready after $${MAX_RETRIES} attempts" >&2
+    exit 1
+  fi
+  sleep 2
+done
+
+airflow db migrate
+airflow connections create-default-connections || true
+airflow users create \
+  --username "$AIRFLOW_ADMIN_USERNAME" \
+  --password "$AIRFLOW_ADMIN_PASSWORD" \
+  --firstname "Air" \
+  --lastname "Flow" \
+  --role Admin \
+  --email "airflow@example.com" 2>/dev/null || true
+
+airflow scheduler >> /opt/airflow/logs/scheduler.log 2>&1 &
+exec airflow webserver
+EOF
+
+sudo chmod +x /opt/ticket-forge/scripts/run_airflow.sh
+sudo chown airflow:airflow /opt/ticket-forge/scripts/run_airflow.sh
+
+sudo tee /etc/systemd/system/airflow.service > /dev/null <<'EOF'
+[Unit]
+Description=Ticket Forge Airflow Runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=airflow
+Group=airflow
+EnvironmentFile=/etc/default/airflow-runtime
+WorkingDirectory=/opt/ticket-forge
+ExecStart=/opt/ticket-forge/scripts/run_airflow.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable airflow
+sudo systemctl restart airflow

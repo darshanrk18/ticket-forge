@@ -85,9 +85,7 @@ async def list_board_tickets(
             detail=str(exc),
         ) from exc
 
-    return BoardTicketsResponse(
-        tickets=[_ticket_to_response(t) for t in tickets]
-    )
+    return BoardTicketsResponse(tickets=[_ticket_to_response(t) for t in tickets])
 
 
 # ------------------------------------------------------------------ #

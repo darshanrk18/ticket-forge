@@ -41,7 +41,11 @@ Airflow runs from the **root** `docker-compose.yml` to avoid duplicate Postgres 
 - Docker Desktop / Docker Compose
 - GitHub token (see [training setup](../apps/training/README.md))
 - Gmail app password (see [training setup](../apps/training/README.md))
-- Both credentials in `.env` at repo root
+- `DATABASE_URL` in `.env` set to your Cloud SQL DSN (for local proxy this is usually `postgresql://...@host.docker.internal:5432/ticketforge`)
+- `GCS_BUCKET_NAME` in `.env` for ticket ETL DAG publishing (format: `gs://<bucket>`)
+- `GOOGLE_APPLICATION_CREDENTIALS` in `.env` pointing to a credentials file path inside the container (for example `/opt/ticket-forge/data/gcp-adc.json`)
+- `GOOGLE_CLOUD_PROJECT` in `.env` set to your GCP project id
+- Credentials in `.env` at repo root
 
 ### Setup
 
@@ -55,6 +59,18 @@ docker compose up -d postgres pgadmin airflow
 # Or use the justfile command
 just airflow-up
 ```
+
+### One-Off Airflow Commands
+
+Use one-off commands with:
+
+```bash
+docker compose run --rm airflow <airflow command>
+```
+
+The Airflow entrypoint now executes custom commands directly instead of starting
+an extra scheduler/webserver process. This prevents stale sidecar containers
+from competing for task execution.
 
 **UIs:**
 - Airflow: http://localhost:8080 (username: `airflow`, password: `airflow`)

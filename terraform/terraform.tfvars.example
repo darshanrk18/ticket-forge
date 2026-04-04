@@ -1,0 +1,34 @@
+project_id  = "your-gcp-project-id"
+region      = "us-east1"
+zone        = "us-east1-b"
+environment = "prod"
+shared_cloud_sql_instance_name = "mlflow-tracking-sql"
+
+state_bucket = "your-terraform-state-bucket"
+data_bucket  = "ticketforge-dvc"
+enable_terraform_state_bucket = true
+
+airflow_vm_machine_type = "e2-medium"
+airflow_vm_disk_size_gb = 50
+airflow_repo_ref        = "main"
+
+# Runtime secret ids read by the Airflow VM startup script
+airflow_github_token_secret_id          = "airflow-github-token-prod"
+airflow_gmail_app_username_secret_id    = "airflow-gmail-app-username-prod"
+airflow_gmail_app_password_secret_id    = "airflow-gmail-app-password-prod"
+
+airflow_db_name = "airflow"
+airflow_db_user = "airflow"
+ticketforge_db_name = "ticketforge"
+ticketforge_db_user = "ticketforge"
+mlflow_db_tier  = "db-custom-1-3840"
+
+# Connection capacity tuning for shared Cloud SQL Postgres.
+# Use a larger tier first, then optionally set max_connections.
+# cloud_sql_max_connections = 300
+
+# Optional overrides
+# training_bucket_name = "ticket-forge-training-artifacts-your-project-dev"
+# airflow_admin_password = "set-via-secret-manager-or-tf-var"
+# airflow_db_password = "set-via-secret-manager-or-tf-var"
+# ticketforge_db_password = "set-via-secret-manager-or-tf-var"

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from shared.configuration import Paths
+from shared.configuration import Paths, getenv_or
 from shared.logging import get_logger
 from training.analysis.bias_gate import evaluate_bias_gate
 from training.analysis.gate_config import load_gate_config
@@ -38,8 +38,12 @@ def _parse_args() -> argparse.Namespace:
   parser.add_argument(
     "--commit-sha", default=_get_git_commit_sha() or "", help="Commit SHA"
   )
-  parser.add_argument("--snapshot-id", default="dvc-latest", help="DVC snapshot id")
-  parser.add_argument("--source-uri", default="dvc://data", help="Dataset source URI")
+  parser.add_argument(
+    "--source-uri",
+    choices=["dvc", "gcs"],
+    default="dvc",
+    help="dataset source selector: dvc uses dvc-latest, gcs uses GCS_BUCKET_NAME",
+  )
   parser.add_argument(
     "--promote",
     choices=["true", "false"],
@@ -64,11 +68,47 @@ def _get_git_commit_sha() -> str | None:
     return None
 
 
-def _run_training(run_id: str) -> None:
+def _run_training(
+  run_id: str,
+  *,
+  source_uri: str,
+) -> None:
   """Execute model training command for a given run id."""
   cmd = [sys.executable, "-m", "training.cmd.train", "--runid", run_id]
+  if source_uri == "gcs":
+    cmd.append("--cloud-storage")
+
   logger.info("Running training command: %s", " ".join(cmd))
   subprocess.run(cmd, check=True)
+
+
+def _resolve_data_snapshot(source_uri: str) -> tuple[str, str]:
+  """Resolve run-manifest data snapshot values for a source selector.
+
+  Args:
+      source_uri: Dataset source selector ("dvc" or "gcs").
+
+  Returns:
+      Tuple of (snapshot_id, source_uri) for run manifest creation.
+
+  Raises:
+      ValueError: If source selector is unsupported or missing required env vars.
+  """
+  if source_uri == "dvc":
+    return "dvc-latest", "dvc://latest"
+
+  if source_uri == "gcs":
+    bucket_uri = getenv_or("GCS_BUCKET_NAME")
+    if not bucket_uri:
+      msg = (
+        "GCS_BUCKET_NAME must be set when --source-uri gcs is used "
+        "(expected a gs:// bucket URI)."
+      )
+      raise ValueError(msg)
+    return "cloud-index", bucket_uri
+
+  msg = f"Unsupported source_uri: {source_uri}"
+  raise ValueError(msg)
 
 
 def _read_best_model(run_dir: Path) -> str:
@@ -132,6 +172,10 @@ def _load_production_baseline() -> tuple[str | None, dict[str, float] | None]:
     return None, None
 
   version = versions[0]
+  if not version.run_id:
+    logger.warning("Production model version is missing run_id")
+    return str(version.version), None
+
   run_metrics = client.get_run(version.run_id).data.metrics
   baseline_metrics: dict[str, float] = {}
   _keys = (
@@ -160,20 +204,21 @@ def main() -> int:
   configure_mlflow_from_env(DEFAULT_TRACKING_URI)
 
   run_id = args.runid
+  snapshot_id, source_uri = _resolve_data_snapshot(args.source_uri)
   run_dir: Path = Paths.models_root / run_id
 
   create_run_manifest(
     run_id=run_id,
     trigger_type=args.trigger,
     commit_sha=args.commit_sha,
-    snapshot_id=args.snapshot_id,
-    source_uri=args.source_uri,
+    snapshot_id=snapshot_id,
+    source_uri=source_uri,
   )
 
   if (run_dir / "best.txt").exists():
     logger.warning("RUN_ID already exists, skipping training")
   else:
-    _run_training(run_id)
+    _run_training(run_id, source_uri=args.source_uri)
 
   best_model = _read_best_model(run_dir)
   candidate_metrics = _read_eval_metrics(run_dir, best_model)

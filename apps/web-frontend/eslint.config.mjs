@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Additional workspace ignores:
+    "node_modules/**",
+    "dist/**",
+    "coverage/**",
+    "**/*.min.js",
   ]),
 ]);
 

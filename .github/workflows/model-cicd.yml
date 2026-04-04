@@ -1,8 +1,9 @@
 name: Model CI/CD
 
 on:
-  push:
-    branches: ["main"]
+  workflow_run:
+    workflows: ["CI/CD"]
+    types: [completed]
   schedule:
     # Run every Monday at 02:00 UTC
     - cron: "0 2 * * 1"
@@ -22,6 +23,14 @@ permissions:
 jobs:
   train-and-promote:
     name: Train / Run & Promote Best Model
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
     outputs:
       run_id: ${{ steps.run-meta.outputs.run_id }}
@@ -52,17 +61,16 @@ jobs:
       - name: Install dependencies
         run: just install-deps
 
+      - name: Install LightGBM runtime dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgomp1
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
           service_account: 'ml-pipeline-sa@${{ secrets.TF_VAR_PROJECT_ID }}.iam.gserviceaccount.com'
-
-      - name: Pull latest DVC data
-        env:
-          DVC_NO_ANALYTICS: "true"
-        run: dvc pull
-
 
       - name: Run training and gate pipeline
         run: |
@@ -71,10 +79,12 @@ jobs:
             --runid "${{ steps.run-meta.outputs.run_id }}" \
             --trigger "${{ github.event_name }}" \
             --commit-sha "${{ github.sha }}" \
-            --snapshot-id "dvc-latest" \
-            --source-uri "dvc://data" \
+            --source-uri "gcs" \
             --promote "$PROMOTE"
         env:
+          # Cloud dataset source (index.json + current_dataset pointer)
+          GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME || format('gs://ticket-forge-training-artifacts-{0}-prod', secrets.TF_VAR_PROJECT_ID) }}
+
           # Enable automatic Cloud Run discovery (no secrets needed!)
           MLFLOW_TRACKING_URI_FROM_GCP: "true"
           MLFLOW_CLOUD_RUN_SERVICE: "mlflow-tracking"

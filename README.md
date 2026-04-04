@@ -84,38 +84,59 @@ Here we guide you through the steps to install the tooling and dependencies need
 
 ## Usage
 
-All usage scripts are defined in a `justfile` which can be run. Airflow commands are documented in [**docker**](./docker/README.md).
+All workflows are exposed through the root `Justfile`.
+
+Common development commands:
+
+- `just` - install dependencies and bootstrap local tooling.
+- `just check` - run Python checks and Terraform checks.
+- `just train -- ...` - run training pipeline commands.
+- `just airflow-up` - run local Airflow + Postgres + pgAdmin via Docker Compose.
+
+GCP Airflow operations:
+
+- `just gcp-airflow-deploy` - deploy/update Airflow VM and runtime secrets from current commit.
+- `just gcp-ticketforge-schema-init` - apply ticketforge Postgres init SQL to Cloud SQL through local proxy.
+- `just gcp-airflow-smoketest <url>` - run health + API smoke checks.
+- `just gcp-airflow-trigger <url> <dag_id> [conf_json] [run_id]` - trigger a DAG run through the Airflow REST API.
+- `just gcp-proxy airflow [local_port]` - open IAP tunnel to Airflow webserver.
+- `just gcp-proxy cloud-sql [local_port]` - open Cloud SQL proxy to shared Postgres.
+- `just gcp-get-conn-info` - print service URLs and credentials from Secret Manager.
+
+Use `just --list` to view the full command set.
+
+## Airflow Deployment (GCP)
+
+This repository deploys Airflow to a private GCE VM using Terraform and a startup
+script that checks out a GitHub ref and installs Airflow natively (no container
+image rollout path for VM deploys).
+
+1. Configure `.env` with at least `TF_VAR_project_id`, `TF_VAR_state_bucket`, and `TF_VAR_region`.
+2. Export runtime integration secrets in your shell:
+   - `GITHUB_TOKEN`
+   - `GMAIL_APP_USERNAME`
+   - `GMAIL_APP_PASSWORD`
+3. Push your branch/commit to `origin`.
+4. Deploy:
+
 ```sh
-$ just --list
-Available recipes:
+just gcp-airflow-deploy
+```
 
-    default                                        # Configure repository and install dependencies
+Optional: deploy a specific git ref already available on GitHub.
 
-    [airflow]
-    airflow-up
+```sh
+AIRFLOW_REPO_REF=main just gcp-airflow-deploy
+```
 
-    [data-pipeline]
-    train *args=''                                 # runs the training script
+Smoke test and access:
 
-    [lang-agnostic]
-    check                                          # runs all checks on the repo from repo-root
-    install-deps                                   # install all 3rd party packages
-    precommit *args='run'                          # Run pre-commit hooks
-
-    [python]
-    pycheck *args="."                              # Run all python checks on particular files and directories
-    pylint *args="."                               # Runs python linting. Specify the directories/files to lint as positional args.
-    pytest *args=''                                # Runs python tests. Any args are forwarded to pytest.
-
-    [terraform]
-    get-repo-id repo='alearningcurve/ticket-forge'
-    get-wif-provider
-    tf *args=''                                    # runs arbitrary terraform command
-    tf-apply *args=''                              # runs terraform apply
-    tf-check                                       # assert good linting
-    tf-init                                        # initializes terraform
-    tf-lint                                        # format terraform
-    tf-plan *args=''                               # runs terraform plan
+```sh
+just gcp-get-conn-info
+just gcp-airflow-smoketest "http://10.20.0.5:8080"
+just gcp-airflow-trigger "http://10.20.0.5:8080" ticket_etl '{"source":"manual"}'
+just gcp-proxy airflow 18080
+# then open http://127.0.0.1:18080
 ```
 
 ## Development

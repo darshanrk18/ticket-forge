@@ -4,11 +4,10 @@
 # pylint: disable=unsubscriptable-object
 
 import uuid
-from datetime import date, datetime
+from datetime import date
 
 from sqlalchemy import (
     Date,
-    DateTime,
     Enum,
     ForeignKey,
     Integer,
@@ -17,7 +16,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -42,9 +40,7 @@ class ProjectTicket(TimestampMixin, Base):
 
     __tablename__ = "project_tickets"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
         ForeignKey("projects.id", ondelete="CASCADE"),
@@ -73,7 +69,14 @@ class ProjectTicket(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     priority: Mapped[str] = mapped_column(
-        Enum("low", "medium", "high", "critical", name="ticket_priority", create_type=False),
+        Enum(
+            "low",
+            "medium",
+            "high",
+            "critical",
+            name="ticket_priority",
+            create_type=False,
+        ),
         nullable=False,
         default="medium",
     )

@@ -4,6 +4,7 @@ resource "google_project_service" "mlflow_services" {
     "sqladmin.googleapis.com",
     "secretmanager.googleapis.com",
     "artifactregistry.googleapis.com",
+    "vpcaccess.googleapis.com",
   ])
 
   project            = var.project_id
@@ -48,12 +49,6 @@ resource "google_storage_bucket_iam_member" "mlflow_artifacts_access" {
   member = "serviceAccount:${google_service_account.mlflow_server.email}"
 }
 
-resource "random_password" "mlflow_db_password" {
-  # MLflow receives this via backend-store URI userinfo; keep it URL-safe.
-  length  = 32
-  special = false
-}
-
 resource "random_password" "mlflow_flask_secret_key" {
   length  = 64
   special = false
@@ -62,59 +57,6 @@ resource "random_password" "mlflow_flask_secret_key" {
 resource "random_password" "mlflow_admin_password" {
   length  = 32
   special = false
-}
-
-resource "google_sql_database_instance" "mlflow" {
-  name             = "${var.mlflow_service_name}-sql"
-  region           = var.region
-  database_version = "POSTGRES_15"
-
-  settings {
-    tier              = var.mlflow_db_tier
-    availability_type = "ZONAL"
-    disk_size         = 20
-    disk_type         = "PD_SSD"
-
-    backup_configuration {
-      enabled = true
-    }
-
-    ip_configuration {
-      # Cloud SQL requires at least one connectivity mode. We use
-      # Cloud SQL connector auth from Cloud Run, so a public endpoint
-      # can be enabled without opening authorized networks.
-      ipv4_enabled = true
-    }
-  }
-
-  deletion_protection = true
-  depends_on          = [google_project_service.mlflow_services]
-}
-
-resource "google_sql_database" "mlflow" {
-  name     = var.mlflow_db_name
-  instance = google_sql_database_instance.mlflow.name
-}
-
-resource "google_sql_user" "mlflow" {
-  instance = google_sql_database_instance.mlflow.name
-  name     = var.mlflow_db_user
-  password = random_password.mlflow_db_password.result
-}
-
-resource "google_secret_manager_secret" "mlflow_db_password" {
-  secret_id = "${var.mlflow_service_name}-db-password"
-
-  replication {
-    auto {}
-  }
-
-  depends_on = [google_project_service.mlflow_services]
-}
-
-resource "google_secret_manager_secret_version" "mlflow_db_password" {
-  secret      = google_secret_manager_secret.mlflow_db_password.id
-  secret_data = random_password.mlflow_db_password.result
 }
 
 resource "google_secret_manager_secret" "mlflow_flask_secret_key" {
@@ -171,7 +113,20 @@ resource "google_cloud_run_v2_service" "mlflow" {
   ingress  = "INGRESS_TRAFFIC_ALL"
 
   template {
-    service_account = google_service_account.mlflow_server.email
+    max_instance_request_concurrency = 100
+    service_account                  = google_service_account.mlflow_server.email
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 2
+    }
+
+    vpc_access {
+      network_interfaces {
+        network    = google_compute_network.airflow_vpc.id
+        subnetwork = google_compute_subnetwork.airflow_subnet.id
+      }
+      egress = "PRIVATE_RANGES_ONLY"
+    }
 
     volumes {
       name = "cloudsql"

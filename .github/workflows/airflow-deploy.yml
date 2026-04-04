@@ -1,0 +1,108 @@
+name: Airflow Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI/CD"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_VAR_project_id: ${{ secrets.TF_VAR_PROJECT_ID || secrets.TF_VAR_project_id }}
+  TF_VAR_state_bucket: ${{ secrets.TF_VAR_STATE_BUCKET || secrets.TF_VAR_state_bucket }}
+  TF_VAR_region: ${{ secrets.TF_VAR_REGION || secrets.TF_VAR_region }}
+  TF_VAR_zone: us-east1-b
+  TF_VAR_environment: prod
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Resolve Airflow repo ref
+        id: repo_ref
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "value=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: tf-apply-sa@${{ env.TF_VAR_project_id }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Validate required deployment secrets
+        env:
+          REQUIRED_AIRFLOW_GITHUB_TOKEN: ${{ secrets.AIRFLOW_GITHUB_TOKEN || '' }}
+          REQUIRED_GMAIL_APP_USERNAME: ${{ secrets.GMAIL_APP_USERNAME || '' }}
+          REQUIRED_GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD || '' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${REQUIRED_AIRFLOW_GITHUB_TOKEN}" ]; then
+            echo "::error::Missing required secret: AIRFLOW_GITHUB_TOKEN"
+            exit 1
+          fi
+
+          if [ -z "${REQUIRED_GMAIL_APP_USERNAME}" ]; then
+            echo "::error::Missing required secret: GMAIL_APP_USERNAME"
+            exit 1
+          fi
+
+          if [ -z "${REQUIRED_GMAIL_APP_PASSWORD}" ]; then
+            echo "::error::Missing required secret: GMAIL_APP_PASSWORD"
+            exit 1
+          fi
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init -backend-config="bucket=${TF_VAR_state_bucket}"
+
+      - name: Deploy Airflow VM and runtime secrets
+        env:
+          AIRFLOW_REPO_REF: ${{ steps.repo_ref.outputs.value }}
+          AIRFLOW_GITHUB_TOKEN: ${{ secrets.AIRFLOW_GITHUB_TOKEN }}
+          GMAIL_APP_USERNAME: ${{ secrets.GMAIL_APP_USERNAME }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: just gcp-airflow-deploy
+
+      - name: Install PostgreSQL client and Cloud SQL Auth Proxy
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+          curl -sSL -o cloud-sql-proxy \
+            https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+
+      - name: Apply ticketforge schema init scripts
+        run: just gcp-ticketforge-schema-init
+
+      - name: Smoke test
+        run: |
+          airflow_url=$(terraform -chdir=terraform output -raw airflow_webserver_url)
+          just gcp-airflow-smoketest "${airflow_url}"

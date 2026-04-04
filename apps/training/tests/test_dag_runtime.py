@@ -206,13 +206,15 @@ class TestTicketEtlDag:
   """Tests for ticket_etl runtime helpers."""
 
   def test_validate_runtime_config_parses_limit(
-    self, monkeypatch: pytest.MonkeyPatch
+    self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
   ) -> None:
     """Parses string limit_per_state and returns output directory."""
     _install_airflow_stubs(monkeypatch)
     module = _import_dag_module(monkeypatch, "ticket_etl")
+    monkeypatch.setattr(module.Paths, "data_root", tmp_path)
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    monkeypatch.setenv("GCS_BUCKET_NAME", "gs://ticket-forge-training-artifacts")
 
     task_instance = DummyTaskInstance()
     context = {
@@ -223,6 +225,7 @@ class TestTicketEtlDag:
     runtime = module.validate_runtime_config(**context)
 
     assert runtime["limit_per_state"] == 150
+    assert runtime["gcs_bucket_uri"] == "gs://ticket-forge-training-artifacts"
     output_dir = Path(runtime["output_dir"])
     assert output_dir.name.startswith("github_issues-")
     assert output_dir.exists()
@@ -236,6 +239,7 @@ class TestTicketEtlDag:
     module = _import_dag_module(monkeypatch, "ticket_etl")
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    monkeypatch.setenv("GCS_BUCKET_NAME", "gs://ticket-forge-training-artifacts")
 
     task_instance = DummyTaskInstance()
     context = {
@@ -245,3 +249,167 @@ class TestTicketEtlDag:
 
     with pytest.raises(DummyAirflowFailError):
       module.validate_runtime_config(**context)
+
+  def test_validate_runtime_config_requires_gcs_bucket(
+    self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+  ) -> None:
+    """Raises AirflowFailException when GCS_BUCKET_NAME is missing."""
+    _install_airflow_stubs(monkeypatch)
+    module = _import_dag_module(monkeypatch, "ticket_etl")
+    monkeypatch.setattr(module.Paths, "data_root", tmp_path)
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    monkeypatch.delenv("GCS_BUCKET_NAME", raising=False)
+
+    task_instance = DummyTaskInstance()
+    context = {
+      "dag_run": DummyDagRun({"limit_per_state": "100"}),
+      "task_instance": task_instance,
+    }
+
+    with pytest.raises(DummyAirflowFailError):
+      module.validate_runtime_config(**context)
+
+  def test_upload_output_dir_to_gcs_calls_publisher(
+    self, monkeypatch: pytest.MonkeyPatch
+  ) -> None:
+    """Upload task forwards runtime values to the publisher helper."""
+    _install_airflow_stubs(monkeypatch)
+    module = _import_dag_module(monkeypatch, "ticket_etl")
+
+    captured: dict[str, object] = {}
+
+    publisher_mod = types.ModuleType("training.etl.postload.publish_ticket_etl_output")
+
+    def _publish_stub(*, output_dir: Path, bucket_uri: str, run_timestamp: str) -> dict:
+      captured["output_dir"] = output_dir
+      captured["bucket_uri"] = bucket_uri
+      captured["run_timestamp"] = run_timestamp
+      return {
+        "dataset_uri": "gs://bucket/github_issues-2026-04-03T200000Z/tickets_transformed_improved.jsonl",
+        "index_uri": "gs://bucket/index.json",
+        "object_count": 7,
+        "object_prefix": "gs://bucket/github_issues-2026-04-03T200000Z/",
+      }
+
+    publisher_mod.publish_ticket_etl_output = _publish_stub  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+      sys.modules,
+      "training.etl.postload.publish_ticket_etl_output",
+      publisher_mod,
+    )
+
+    output_dir = Path("/tmp/github_issues-2026-04-03T200000Z")
+
+    task_instance = DummyTaskInstance()
+    task_instance.xcom["runtime"] = {
+      "output_dir": str(output_dir),
+      "run_timestamp": "2026-04-03T200000Z",
+      "gcs_bucket_uri": "gs://bucket",
+    }
+    context = {"task_instance": task_instance}
+
+    result = module.upload_output_dir_to_gcs(**context)
+
+    assert captured["output_dir"] == output_dir
+    assert captured["bucket_uri"] == "gs://bucket"
+    assert captured["run_timestamp"] == "2026-04-03T200000Z"
+    assert result["dataset_uri"].startswith("gs://bucket/")
+
+
+class TestTicketEtlFromFileDag:
+  """Tests for ticket_etl_from_file runtime helpers."""
+
+  def test_validate_runtime_config_includes_gcs_bucket(
+    self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+  ) -> None:
+    """Includes normalized GCS bucket URI and output directory in runtime config."""
+    _install_airflow_stubs(monkeypatch)
+    module = _import_dag_module(monkeypatch, "ticket_etl_from_file")
+    monkeypatch.setattr(module.Paths, "data_root", tmp_path)
+
+    input_file = tmp_path / "all_tickets.json"
+    input_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(module, "INPUT_RAW_PATH", input_file)
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    monkeypatch.setenv("GCS_BUCKET_NAME", "gs://ticket-forge-training-artifacts")
+
+    task_instance = DummyTaskInstance()
+    context = {"dag_run": DummyDagRun({}), "task_instance": task_instance}
+
+    runtime = module.validate_runtime_config(**context)
+
+    assert runtime["dsn"] == "postgresql://test"
+    assert runtime["gcs_bucket_uri"] == "gs://ticket-forge-training-artifacts"
+    output_dir = Path(runtime["output_dir"])
+    assert output_dir.name.startswith("github_issues-")
+    assert output_dir.exists()
+    assert task_instance.xcom["runtime"] == runtime
+
+  def test_validate_runtime_config_requires_gcs_bucket(
+    self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+  ) -> None:
+    """Raises AirflowFailException when GCS_BUCKET_NAME is missing."""
+    _install_airflow_stubs(monkeypatch)
+    module = _import_dag_module(monkeypatch, "ticket_etl_from_file")
+    monkeypatch.setattr(module.Paths, "data_root", tmp_path)
+
+    input_file = tmp_path / "all_tickets.json"
+    input_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(module, "INPUT_RAW_PATH", input_file)
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    monkeypatch.delenv("GCS_BUCKET_NAME", raising=False)
+
+    task_instance = DummyTaskInstance()
+    context = {"dag_run": DummyDagRun({}), "task_instance": task_instance}
+
+    with pytest.raises(DummyAirflowFailError):
+      module.validate_runtime_config(**context)
+
+  def test_upload_output_dir_to_gcs_calls_publisher(
+    self, monkeypatch: pytest.MonkeyPatch
+  ) -> None:
+    """Upload task forwards runtime values to the publisher helper."""
+    _install_airflow_stubs(monkeypatch)
+    module = _import_dag_module(monkeypatch, "ticket_etl_from_file")
+
+    captured: dict[str, object] = {}
+
+    publisher_mod = types.ModuleType("training.etl.postload.publish_ticket_etl_output")
+
+    def _publish_stub(*, output_dir: Path, bucket_uri: str, run_timestamp: str) -> dict:
+      captured["output_dir"] = output_dir
+      captured["bucket_uri"] = bucket_uri
+      captured["run_timestamp"] = run_timestamp
+      return {
+        "dataset_uri": "gs://bucket/github_issues-2026-04-03T200000Z/tickets_transformed_improved.jsonl",
+        "index_uri": "gs://bucket/index.json",
+        "object_count": 7,
+        "object_prefix": "gs://bucket/github_issues-2026-04-03T200000Z/",
+      }
+
+    publisher_mod.publish_ticket_etl_output = _publish_stub  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+      sys.modules,
+      "training.etl.postload.publish_ticket_etl_output",
+      publisher_mod,
+    )
+
+    output_dir = Path("/tmp/github_issues-2026-04-03T200000Z")
+
+    task_instance = DummyTaskInstance()
+    task_instance.xcom["runtime"] = {
+      "output_dir": str(output_dir),
+      "run_timestamp": "2026-04-03T200000Z",
+      "gcs_bucket_uri": "gs://bucket",
+    }
+    context = {"task_instance": task_instance}
+
+    result = module.upload_output_dir_to_gcs(**context)
+
+    assert captured["output_dir"] == output_dir
+    assert captured["bucket_uri"] == "gs://bucket"
+    assert captured["run_timestamp"] == "2026-04-03T200000Z"
+    assert result["dataset_uri"].startswith("gs://bucket/")

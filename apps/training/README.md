@@ -103,7 +103,11 @@ uv run -m training.etl.ingest.transform
 
 ## Model Training
 
-**Supported models:** Random Forest, Linear Regression, SVM (kernel approximation), XGBoost.
+**Supported models:** Random Forest, Linear Regression, SVM (kernel approximation), XGBoost, LightGBM.
+
+> [!NOTE]
+> LightGBM requires an OpenMP runtime. On Debian/Ubuntu Linux, install
+> `libgomp1` if you see `OSError: libgomp.so.1: cannot open shared object file`.
 
 > [!IMPORTANT]
 > Current trainers use dummy/sample data for validation and are not trained on the full dataset. Full model training on production data is planned for the next deliverable. The training harness, hyperparameter search, and evaluation pipeline are production-ready and validated with subset data (`Dataset.as_sklearn_cv_split(subset_size=20)`).
@@ -227,7 +231,8 @@ EOF
     - Optional override to specify a particular dataset instead of using the latest.
     - Can be a directory name (e.g., `github_issues-2026-02-24T200000Z`) or an absolute path.
     - If relative, resolved relative to `data_root`.
-    - Must contain `tickets_transformed_improved.jsonl`.
+    - Must contain `tickets_transformed_improved.jsonl` or
+      `tickets_transformed_improved.jsonl.gz`.
     - If unset, training defaults to the most recent timestamped pipeline output.
 
 Example: train using a specific dataset from a previous Airflow run:
@@ -241,6 +246,46 @@ just train
 export TICKET_FORGE_DATASET_ID=/path/to/data/github_issues-2026-02-24T194022Z
 just train
 ```
+
+### Cloud Storage dataset mode
+
+Training can resolve its dataset from a GCS bucket index file instead of local `data/`:
+
+1. Ensure `GCS_BUCKET_NAME` is set to a bucket URI (for example `gs://ticket-forge-training-artifacts-prod`).
+2. Ensure bucket root contains `index.json` with at least:
+
+```json
+{
+    "current_dataset": "gs://ticket-forge-training-artifacts-prod/some_run_id/tickets_transformed_improved.jsonl.gz",
+    "dataset_version": "v1.0",
+    "created_date": "2026-03-29T00:00:00Z"
+}
+```
+
+3. Run training in cloud mode:
+
+```bash
+just train -- --cloud-storage
+
+# Gate-driven CI entrypoint with cloud dataset mode (uses GCS_BUCKET_NAME)
+just train-with-gates -- --runid local-gates-1 --source-uri gcs
+
+# Gate-driven CI entrypoint with local dataset mode
+just train-with-gates -- --runid local-gates-1 --source-uri dvc
+```
+
+Optional explicit bucket override:
+
+```bash
+just train -- --cloud-storage --gcs-bucket gs://ticket-forge-training-artifacts-prod
+```
+
+When cloud mode is enabled, run manifests include cloud lineage fields:
+
+- `training_dataset.dataset_source`
+- `training_dataset.dataset_path`
+- `training_dataset.dataset_version`
+- `training_dataset.dataset_id`
 
 ### New run artifacts
 

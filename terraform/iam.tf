@@ -148,3 +148,33 @@ resource "google_storage_bucket_iam_member" "ml_pipeline_dvc_access" {
   role   = "roles/storage.objectUser"
   member = "serviceAccount:${google_service_account.ml_pipeline.email}"
 }
+
+resource "google_service_account" "airflow_runtime" {
+  account_id   = "airflow-runtime-sa"
+  display_name = "Airflow Runtime Service Account"
+  description  = "Runs Airflow VM and reads secrets plus training bucket artifacts."
+}
+
+resource "google_project_iam_member" "airflow_runtime_secret_access" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.airflow_runtime.email}"
+}
+
+resource "google_project_iam_member" "airflow_runtime_sql_client" {
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.airflow_runtime.email}"
+}
+
+resource "google_storage_bucket_iam_member" "airflow_runtime_training_read" {
+  bucket = google_storage_bucket.training_artifacts.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.airflow_runtime.email}"
+}
+
+resource "google_storage_bucket_iam_member" "airflow_runtime_training_write_manifests" {
+  bucket = google_storage_bucket.training_artifacts.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.airflow_runtime.email}"
+}

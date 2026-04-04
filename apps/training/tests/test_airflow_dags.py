@@ -41,7 +41,12 @@ class TestDagFiles:
       (
         "ticket_etl.py",
         "ticket_etl",
-        {"validate_runtime_config", "run_transform"},
+        {"validate_runtime_config", "run_transform", "upload_output_dir_to_gcs"},
+      ),
+      (
+        "ticket_etl_from_file.py",
+        "ticket_etl_from_file",
+        {"validate_runtime_config", "run_transform", "upload_output_dir_to_gcs"},
       ),
       (
         "resume_ingest.py",

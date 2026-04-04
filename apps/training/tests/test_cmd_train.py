@@ -14,27 +14,42 @@ class TestParseArguments:
   def test_parse_arguments_with_custom_models(self) -> None:
     """Test parsing arguments with custom models."""
     with patch("sys.argv", ["train.py", "-m", "forest", "svm"]):
-      models, run_id, promote = _parse_arguments()
+      models, run_id, promote, cloud_storage, gcs_bucket = _parse_arguments()
       assert "forest" in models
       assert "svm" in models
+      assert promote is False
+      assert cloud_storage is False
+      assert gcs_bucket is None
 
   def test_parse_arguments_with_custom_run_id(self) -> None:
     """Test parsing arguments with custom run_id."""
     with patch("sys.argv", ["train.py", "-r", "test_run_123"]):
-      models, run_id, promote = _parse_arguments()
+      _models, run_id, _promote, cloud_storage, gcs_bucket = _parse_arguments()
       assert run_id == "test_run_123"
+      assert cloud_storage is False
+      assert gcs_bucket is None
 
   def test_parse_arguments_promote_defaults_false(self) -> None:
     """Test that --promote defaults to False."""
     with patch("sys.argv", ["train.py"]):
-      _models, _run_id, promote = _parse_arguments()
+      _models, _run_id, promote, _cloud_storage, _gcs_bucket = _parse_arguments()
       assert promote is False
 
   def test_parse_arguments_promote_flag(self) -> None:
     """Test that --promote sets promote to True."""
     with patch("sys.argv", ["train.py", "--promote"]):
-      _models, _run_id, promote = _parse_arguments()
+      _models, _run_id, promote, _cloud_storage, _gcs_bucket = _parse_arguments()
       assert promote is True
+
+  def test_parse_arguments_cloud_storage_flags(self) -> None:
+    """Test cloud storage flags are parsed correctly."""
+    with patch(
+      "sys.argv",
+      ["train.py", "--cloud-storage", "--gcs-bucket", "gs://custom-bucket"],
+    ):
+      _models, _run_id, _promote, cloud_storage, gcs_bucket = _parse_arguments()
+      assert cloud_storage is True
+      assert gcs_bucket == "gs://custom-bucket"
 
 
 class TestLoadMetrics:

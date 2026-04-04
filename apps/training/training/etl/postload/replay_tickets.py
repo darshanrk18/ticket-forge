@@ -36,7 +36,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import os
 from dataclasses import dataclass
 
 import psycopg2
@@ -44,6 +43,7 @@ from ml_core.keywords import get_keyword_extractor
 from ml_core.profiles.updater import ProfileUpdater
 from psycopg2.extras import RealDictCursor
 from shared.logging import get_logger
+from training.etl.dsn import resolve_postgres_dsn
 
 logger = get_logger(__name__)
 
@@ -89,10 +89,7 @@ class TicketReplayer:
             ``DATABASE_URL`` environment variable.
         alpha: Decay weight for the Experience Decay Method.
     """
-    self.dsn = dsn or os.environ.get("DATABASE_URL")
-    if not self.dsn:
-      msg = "No Postgres DSN provided. Pass `dsn` or set DATABASE_URL."
-      raise RuntimeError(msg)
+    self.dsn = resolve_postgres_dsn(dsn)
 
     if not 0 < alpha < 1:
       msg = f"Alpha must be between 0 and 1 exclusive, got {alpha}"

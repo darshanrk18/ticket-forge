@@ -17,7 +17,6 @@ the schema from `scripts/postgres/init/02_schema.sql`` applied.
 """
 
 import math
-import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +28,7 @@ from ml_core.keywords import get_keyword_extractor
 from ml_core.profiles.updater import ProfileUpdater
 from psycopg2.extras import RealDictCursor
 from shared import get_logger
+from training.etl.dsn import resolve_postgres_dsn
 from training.etl.ingest.resume.resume_extract import ResumeExtractor
 from training.etl.ingest.resume.resume_normalize import ResumeNormalizer
 
@@ -72,10 +72,7 @@ class ColdStartManager:
     embedding_model: str = "all-MiniLM-L6-v2",
   ) -> None:
     """Initialize the manager with a Postgres DSN and embedding config."""
-    self.dsn = dsn or os.environ.get("DATABASE_URL")
-    if not self.dsn:
-      msg = "No Postgres DSN provided. Pass `dsn` or set the DATABASE_URL env var."
-      raise RuntimeError(msg)
+    self.dsn = resolve_postgres_dsn(dsn)
 
     self.extractor = ResumeExtractor()
     self.normalizer = ResumeNormalizer()

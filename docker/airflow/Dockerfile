@@ -35,6 +35,10 @@ RUN chown -R airflow:0 /opt/airflow && \
 USER airflow
 
 ENV PYTHONPATH=/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared
+ENV AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
+ENV AIRFLOW_ADMIN_USERNAME=airflow
+ENV AIRFLOW_ADMIN_PASSWORD=airflow
 
 ENTRYPOINT ["/entrypoint.sh"]
 

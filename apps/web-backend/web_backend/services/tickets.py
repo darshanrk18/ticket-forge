@@ -46,9 +46,7 @@ async def _verify_membership(
 
 async def _get_project_by_slug(db: AsyncSession, slug: str) -> Project:
     """Fetch project by slug. Raises ValueError if not found."""
-    result = await db.execute(
-        select(Project).where(Project.slug == slug)
-    )
+    result = await db.execute(select(Project).where(Project.slug == slug))
     project = result.scalar_one_or_none()
     if project is None:
         msg = "Project not found"

@@ -1,5 +1,6 @@
 """Dataset utilities for machine learning pipelines."""
 
+import gzip
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,10 @@ N_CLASSES = len(TIME_BUCKETS) - 1
 
 _DATETIME_FMT = "%Y-%m-%dT%H:%M:%SZ"
 _MAX_TTA_HOURS = 720.0  # cap time-to-assignment at 30 days
+_DATASET_FILE_CANDIDATES = (
+  "tickets_transformed_improved.jsonl",
+  "tickets_transformed_improved.jsonl.gz",
+)
 
 
 def _parse_tta(created: str | None, assigned: str | None) -> float:
@@ -71,9 +76,25 @@ def _parse_tta(created: str | None, assigned: str | None) -> float:
     return 0.0
 
 
+def _find_dataset_file(directory: Path) -> Path | None:
+  """Return the first supported transformed dataset file in a directory.
+
+  Args:
+      directory: Candidate pipeline output directory.
+
+  Returns:
+      Path to a supported dataset file, or None if none are present.
+  """
+  for filename in _DATASET_FILE_CANDIDATES:
+    candidate = directory / filename
+    if candidate.exists():
+      return candidate
+  return None
+
+
 def find_latest_pipeline_output() -> Path:
   """Returns the path to the most recent timestamped pipeline output directory
-  that contains a tickets_balanced.jsonl file.
+  that contains a tickets_transformed_improved.jsonl[.gz] file.
 
   First checks the TICKET_FORGE_DATASET_ID environment variable for an explicit
   dataset override. If set, uses that dataset ID (can be either a directory name
@@ -91,7 +112,7 @@ def find_latest_pipeline_output() -> Path:
       FileNotFoundError: If no valid pipeline output directory can be located.
   """
   data_root = Paths.data_root
-  required_file = "tickets_balanced.jsonl"
+  required_files = " or ".join(_DATASET_FILE_CANDIDATES)
 
   # Check for explicit dataset override via environment variable
   dataset_override = getenv_or("TICKET_FORGE_DATASET_ID")
@@ -100,23 +121,23 @@ def find_latest_pipeline_output() -> Path:
     # If relative, resolve relative to data_root; if absolute, use as-is
     if not override_path.is_absolute():
       override_path = data_root / override_path
-    if (override_path / required_file).exists():
+    if _find_dataset_file(override_path) is not None:
       logger.info(f"using dataset override: {override_path}")
       return override_path
     msg = (
       f"Dataset override {dataset_override} is not valid or missing "
-      f"{required_file}. Override path resolved to: {override_path}"
+      f"{required_files}. Override path resolved to: {override_path}"
     )
     raise FileNotFoundError(msg)
 
   # Default: find latest timestamped run
   timestamped = sorted(data_root.glob("github_issues-*"), reverse=True)
   for candidate in timestamped:
-    if (candidate / required_file).exists():
+    if _find_dataset_file(candidate) is not None:
       logger.info(f"latest piece of data: {candidate}")
       return candidate
   legacy = data_root / "github_issues"
-  if (legacy / required_file).exists():
+  if _find_dataset_file(legacy) is not None:
     return legacy
   msg = (
     f"No valid pipeline output found under {data_root}. "
@@ -126,10 +147,10 @@ def find_latest_pipeline_output() -> Path:
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-  """Loads a .jsonl file into a list of dicts.
+  """Loads a .jsonl or .jsonl.gz file into a list of dicts.
 
   Args:
-      path: Path to the .jsonl file.
+      path: Path to the .jsonl or .jsonl.gz file.
 
   Returns:
       List of parsed JSON objects.
@@ -141,7 +162,12 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     msg = f"Expected data file not found: {path}"
     raise FileNotFoundError(msg)
   records = []
-  with open(path) as f:
+  if path.suffix == ".gz":
+    open_fn = gzip.open
+  else:
+    open_fn = open
+
+  with open_fn(path, "rt", encoding="utf-8") as f:
     for line in f:
       line = line.strip()
       if line:
@@ -213,10 +239,17 @@ class Dataset(BaseModel):
         List of ticket dicts belonging to this split.
     """
     pipeline_dir = find_latest_pipeline_output()
-    jsonl_path = pipeline_dir / "tickets_balanced.jsonl"
-    cache_key = str(jsonl_path)
+    dataset_path = _find_dataset_file(pipeline_dir)
+    if dataset_path is None:
+      msg = (
+        "Expected transformed dataset file not found in "
+        f"{pipeline_dir}. Tried: {', '.join(_DATASET_FILE_CANDIDATES)}"
+      )
+      raise FileNotFoundError(msg)
+
+    cache_key = str(dataset_path)
     if cache_key not in _records_cache:
-      _records_cache[cache_key] = _load_jsonl(jsonl_path)
+      _records_cache[cache_key] = _load_jsonl(dataset_path)
     all_records = _records_cache[cache_key]
 
     indices = _split_indices(len(all_records), self.split)

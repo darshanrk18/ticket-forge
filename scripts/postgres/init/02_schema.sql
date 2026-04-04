@@ -3,7 +3,11 @@
 -- Supports hybrid search: semantic (vector) + lexical (full-text).
 
 -- Create ENUM for ticket status.
-CREATE TYPE ticket_status AS ENUM ('open', 'in-progress', 'closed');
+DO $$ BEGIN
+  CREATE TYPE ticket_status AS ENUM ('open', 'in-progress', 'closed');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Users: engineer profiles with dynamic profile vectors and skill keywords.
 -- Profile vectors evolve as tickets are completed (moving average with decay).

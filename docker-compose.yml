@@ -53,7 +53,10 @@ services:
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.session,airflow.api.auth.backend.basic_auth"
       # Our application env vars
-      DATABASE_URL: "postgresql://ticketforge:root@postgres:5432/ticketforge"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://ticketforge:root@postgres:5432/ticketforge}
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       PYTHONPATH: "/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared"
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
@@ -91,7 +94,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: "postgresql://ticketforge:root@postgres:5432/ticketforge"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://ticketforge:root@postgres:5432/ticketforge}
       AIRFLOW_BASE_URL: "http://airflow:8080"
       AIRFLOW_USERNAME: "airflow"
       AIRFLOW_PASSWORD: "airflow"

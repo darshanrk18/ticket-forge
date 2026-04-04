@@ -15,13 +15,15 @@ Environment Variables:
     - Can be a directory name (e.g., 'github_issues-2026-02-24T200000Z')
       or an absolute path.
     - If relative, resolved relative to data_root.
-    - Must contain tickets_balanced.jsonl.
+    - Must contain tickets_transformed_improved.jsonl or
+      tickets_transformed_improved.jsonl.gz.
 """
 
 import argparse
 import datetime
 import importlib
 import json
+import os
 import time
 from pathlib import Path
 
@@ -39,6 +41,7 @@ from training.analysis.mlflow_config import (
   configure_mlflow_from_env,
 )
 from training.analysis.run_manifest import create_run_manifest, update_manifest
+from training.cloud_storage_loader import CloudDatasetReference, resolve_cloud_dataset
 from training.dataset import find_latest_pipeline_output
 
 logger = get_logger(__name__)
@@ -83,7 +86,9 @@ def persist_validation_gate_outcome(
   )
 
 
-def _parse_arguments() -> tuple[set[str], str, bool]:
+def _parse_arguments(
+  argv: list[str] | None = None,
+) -> tuple[set[str], str, bool, bool, str | None]:
   """Parse command line arguments.
 
   Returns:
@@ -115,8 +120,21 @@ def _parse_arguments() -> tuple[set[str], str, bool]:
     help="promote best model to MLflow Production after training",
   )
 
-  args = parser.parse_args()
-  return args.models, args.runid, args.promote
+  parser.add_argument(
+    "--cloud-storage",
+    action="store_true",
+    help="load dataset location from GCS bucket index.json instead of local data",
+  )
+
+  parser.add_argument(
+    "--gcs-bucket",
+    type=str,
+    default=None,
+    help="optional gs:// bucket URI override for cloud dataset resolution",
+  )
+
+  args = parser.parse_args(argv)
+  return args.models, args.runid, args.promote, args.cloud_storage, args.gcs_bucket
 
 
 def _enable_autolog(max_tuning_runs: int) -> None:
@@ -190,6 +208,45 @@ def _train_models(models_list: set[str], run_id: str) -> None:
     logger.info("---------- TRAINING %s %s in (%s) ----------", model, msg, train_time)
 
 
+def _configure_cloud_dataset(
+  run_id: str,
+  use_cloud_storage: bool,
+  gcs_bucket: str | None,
+) -> CloudDatasetReference | None:
+  """Resolve cloud dataset inputs and persist source metadata in manifest.
+
+  Args:
+      run_id: Training run identifier.
+      use_cloud_storage: Whether cloud dataset mode is enabled.
+      gcs_bucket: Optional bucket override URI.
+
+  Returns:
+      Cloud dataset reference when cloud mode is enabled, otherwise None.
+  """
+  if not use_cloud_storage:
+    return None
+
+  cloud_dataset_ref = resolve_cloud_dataset(gcs_bucket)
+  os.environ["TICKET_FORGE_DATASET_ID"] = str(cloud_dataset_ref.local_directory)
+  update_manifest(
+    run_id,
+    data_snapshot={
+      "snapshot_id": cloud_dataset_ref.dataset_version,
+      "source_uri": cloud_dataset_ref.dataset_uri,
+      "resolved_at": datetime.datetime.now(datetime.UTC).isoformat(),
+      "dataset_id": cloud_dataset_ref.dataset_id,
+      "bucket_name": cloud_dataset_ref.bucket_name,
+      "dataset_source": "cloud_storage",
+    },
+  )
+  logger.info(
+    "Training configured to use cloud dataset %s (%s)",
+    cloud_dataset_ref.dataset_uri,
+    cloud_dataset_ref.dataset_version,
+  )
+  return cloud_dataset_ref
+
+
 def _load_metrics(run_dir: Path) -> tuple[dict[str, dict[str, float]], list]:
   """Load metrics from all evaluation files in the run directory.
 
@@ -246,9 +303,89 @@ def _save_best_model_info(best_models: list, run_dir: Path) -> None:
   logger.info("=" * 50)
 
 
+def _run_mlflow_training_pipeline(
+  models_list: set[str],
+  run_id: str,
+  run_dir: Path,
+) -> None:
+  """Run the multi-model training workflow under a parent MLflow run.
+
+  Args:
+      models_list: Set of model names to train.
+      run_id: Unique run identifier.
+      run_dir: Directory where run artifacts are stored.
+  """
+  with mlflow.start_run(run_name="multi_model_search"):
+    mlflow.set_tag("run_level", "parent")
+    mlflow.set_tag("run_id", run_id)
+    mlflow.log_params(
+      {
+        "run_id": run_id,
+        "candidate_models": ",".join(sorted(models_list)),
+        "candidate_model_count": len(models_list),
+      }
+    )
+
+    _train_models(models_list, run_id)
+
+    metrics_data, best_models = _load_metrics(run_dir)
+    if metrics_data:
+      _plot_metrics(metrics_data, run_dir)
+      perf_plot = run_dir / "performance.png"
+      if perf_plot.exists():
+        mlflow.log_artifact(str(perf_plot), artifact_path="plots")
+
+    _save_best_model_info(best_models, run_dir)
+    best_file = run_dir / "best.txt"
+    if best_file.exists():
+      mlflow.log_artifact(str(best_file), artifact_path="summary")
+
+    try:
+      from training.analysis.run_sensitivity_analysis import (
+        run_sensitivity_analysis,
+        save_cv_results,
+      )
+
+      save_cv_results(run_id)
+      run_sensitivity_analysis(run_id)
+    except Exception:
+      logger.exception("Sensitivity analysis failed — skipping")
+
+
+def _run_post_training_actions(run_id: str, promote: bool) -> None:
+  """Run optional promotion and artifact push logic.
+
+  Args:
+      run_id: Unique run identifier.
+      promote: Whether model promotion should be attempted.
+  """
+  if promote:
+    from training.analysis.mlflow_tracking import promote_best_model
+
+    promote_best_model(run_id)
+
+  try:
+    from training.analysis.push_model_artifact import push_model_artifacts
+
+    push_model_artifacts(run_id)
+  except Exception:
+    logger.exception("Artifact push failed — skipping")
+
+
 def main() -> None:
   """Trains models according to user params."""
-  models_list, run_id, promote = _parse_arguments()
+  models_list, run_id, promote, use_cloud_storage, gcs_bucket = _parse_arguments()
+
+  # Create output directory for this run
+  run_dir = Paths.models_root / run_id
+  run_dir.mkdir(parents=True, exist_ok=True)
+  _ensure_run_manifest(run_id)
+
+  cloud_dataset_ref = _configure_cloud_dataset(
+    run_id=run_id,
+    use_cloud_storage=use_cloud_storage,
+    gcs_bucket=gcs_bucket,
+  )
 
   tracking_uri = configure_mlflow_from_env(DEFAULT_TRACKING_URI)
   experiment_name = str(getenv_or("MLFLOW_EXPERIMENT_NAME", "ticket-forge-training"))
@@ -266,66 +403,19 @@ def main() -> None:
   logger.info("MLflow configured for training harness: %s", tracking_uri)
   logger.info("Max tuning runs to log: %d", max_tuning_runs)
 
-  # Create output directory for this run
-  run_dir = Paths.models_root / run_id
-  run_dir.mkdir(parents=True, exist_ok=True)
-  _ensure_run_manifest(run_id)
+  _run_mlflow_training_pipeline(models_list=models_list, run_id=run_id, run_dir=run_dir)
+  _run_post_training_actions(run_id=run_id, promote=promote)
 
-  # Keep a single parent run for the entire harness execution.
-  with mlflow.start_run(run_name="multi_model_search"):
-    mlflow.set_tag("run_level", "parent")
-    mlflow.set_tag("run_id", run_id)
-    mlflow.log_params(
-      {
-        "run_id": run_id,
-        "candidate_models": ",".join(sorted(models_list)),
-        "candidate_model_count": len(models_list),
-      }
+  if cloud_dataset_ref is not None:
+    update_manifest(
+      run_id,
+      training_dataset={
+        "dataset_source": "cloud_storage",
+        "dataset_path": cloud_dataset_ref.dataset_uri,
+        "dataset_version": cloud_dataset_ref.dataset_version,
+        "dataset_id": cloud_dataset_ref.dataset_id,
+      },
     )
-
-    # Train models under nested runs.
-    _train_models(models_list, run_id)
-
-    # Load metrics and identify best model.
-    metrics_data, best_models = _load_metrics(run_dir)
-
-    # Plot metrics and log summary artifacts to parent run.
-    if metrics_data:
-      _plot_metrics(metrics_data, run_dir)
-      perf_plot = run_dir / "performance.png"
-      if perf_plot.exists():
-        mlflow.log_artifact(str(perf_plot), artifact_path="plots")
-
-    _save_best_model_info(best_models, run_dir)
-    best_file = run_dir / "best.txt"
-    if best_file.exists():
-      mlflow.log_artifact(str(best_file), artifact_path="summary")
-
-    # Save cv_results_ from pickles + run sensitivity analysis (hyperparam + SHAP)
-    try:
-      from training.analysis.run_sensitivity_analysis import (
-        run_sensitivity_analysis,
-        save_cv_results,
-      )
-
-      save_cv_results(run_id)
-      run_sensitivity_analysis(run_id)
-    except Exception:
-      logger.exception("Sensitivity analysis failed — skipping")
-
-  # Optional promotion remains after training run is complete.
-  if promote:
-    from training.analysis.mlflow_tracking import promote_best_model
-
-    promote_best_model(run_id)
-
-  # Push best model artifacts to GCP Cloud Storage
-  try:
-    from training.analysis.push_model_artifact import push_model_artifacts
-
-    push_model_artifacts(run_id)
-  except Exception:
-    logger.exception("Artifact push failed — skipping")
 
 
 def _plot_metrics(metrics_data: dict[str, dict[str, float]], run_dir: Path) -> None:

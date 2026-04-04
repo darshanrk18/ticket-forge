@@ -1,5 +1,6 @@
 """Tests for Dataset class."""
 
+import gzip
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -59,11 +60,18 @@ def _make_fake_pipeline_dir(
   tmp_path: Path,
   dirname: str = "github_issues-2026-02-24T194022Z",
   include_weights: bool = True,
+  compressed_dataset: bool = False,
 ) -> Path:
   """Creates a fake timestamped pipeline output directory."""
   run_dir = tmp_path / dirname
   run_dir.mkdir(parents=True)
-  (run_dir / "tickets_balanced.jsonl").write_text(_FAKE_JSONL)
+  if compressed_dataset:
+    with gzip.open(
+      run_dir / "tickets_transformed_improved.jsonl.gz", "wt", encoding="utf-8"
+    ) as file:
+      file.write(_FAKE_JSONL)
+  else:
+    (run_dir / "tickets_transformed_improved.jsonl").write_text(_FAKE_JSONL)
   if include_weights:
     (run_dir / "sample_weights.json").write_text(json.dumps(_FAKE_WEIGHTS))
   return run_dir
@@ -148,8 +156,8 @@ class TestFindLatestPipelineOutput:
     older.mkdir()
     newer.mkdir()
     # Both have the required file — newest should be picked
-    (older / "tickets_balanced.jsonl").write_text("{}")
-    (newer / "tickets_balanced.jsonl").write_text("{}")
+    (older / "tickets_transformed_improved.jsonl").write_text("{}")
+    (newer / "tickets_transformed_improved.jsonl").write_text("{}")
 
     with patch("training.dataset.Paths") as mock_paths:
       mock_paths.data_root = tmp_path
@@ -165,7 +173,7 @@ class TestFindLatestPipelineOutput:
     incomplete.mkdir()
     complete.mkdir()
     # Only the older dir has the required file
-    (complete / "tickets_balanced.jsonl").write_text("{}")
+    (complete / "tickets_transformed_improved.jsonl").write_text("{}")
 
     with patch("training.dataset.Paths") as mock_paths:
       mock_paths.data_root = tmp_path
@@ -178,7 +186,7 @@ class TestFindLatestPipelineOutput:
 
     legacy = tmp_path / "github_issues"
     legacy.mkdir()
-    (legacy / "tickets_balanced.jsonl").write_text("{}")
+    (legacy / "tickets_transformed_improved.jsonl").write_text("{}")
 
     with patch("training.dataset.Paths") as mock_paths:
       mock_paths.data_root = tmp_path
@@ -200,12 +208,12 @@ class TestFindLatestPipelineOutput:
     # Create a dataset with explicit name
     dataset = tmp_path / "github_issues-2026-02-24T194022Z"
     dataset.mkdir()
-    (dataset / "tickets_balanced.jsonl").write_text("{}")
+    (dataset / "tickets_transformed_improved.jsonl").write_text("{}")
 
     # Also create a newer one to ensure override takes precedence
     newer = tmp_path / "github_issues-2026-02-24T200000Z"
     newer.mkdir()
-    (newer / "tickets_balanced.jsonl").write_text("{}")
+    (newer / "tickets_transformed_improved.jsonl").write_text("{}")
 
     with (
       patch("training.dataset.Paths") as mock_paths,
@@ -223,7 +231,7 @@ class TestFindLatestPipelineOutput:
 
     dataset = tmp_path / "github_issues-2026-02-24T194022Z"
     dataset.mkdir()
-    (dataset / "tickets_balanced.jsonl").write_text("{}")
+    (dataset / "tickets_transformed_improved.jsonl").write_text("{}")
 
     with (
       patch("training.dataset.Paths") as mock_paths,
@@ -268,7 +276,26 @@ class TestFindLatestPipelineOutput:
         find_latest_pipeline_output()
 
       assert "Dataset override" in str(exc_info.value)
-      assert "missing tickets_balanced.jsonl" in str(exc_info.value)
+      assert "missing tickets_transformed_improved.jsonl" in str(exc_info.value)
+
+  def test_accepts_gzip_dataset_override(self, tmp_path):
+    from training.dataset import find_latest_pipeline_output
+
+    dataset = _make_fake_pipeline_dir(
+      tmp_path,
+      dirname="github_issues-2026-02-24T194022Z",
+      compressed_dataset=True,
+    )
+
+    with (
+      patch("training.dataset.Paths") as mock_paths,
+      patch("training.dataset.getenv_or") as mock_getenv,
+    ):
+      mock_paths.data_root = tmp_path
+      mock_getenv.return_value = "github_issues-2026-02-24T194022Z"
+      result = find_latest_pipeline_output()
+
+    assert result == dataset
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +370,17 @@ class TestLoadXRealData:
       mp.data_root = tmp_path
       x = Dataset(split="train", subset_size=3).load_x()
     assert x.shape[0] == 3
+
+  def test_loads_gzip_dataset(self, tmp_path):
+    _make_fake_pipeline_dir(tmp_path, compressed_dataset=True)
+    with (
+      patch("training.dataset.Paths") as mp,
+      patch("training.dataset.TRAIN_USE_DUMMY_DATA", False),
+    ):
+      mp.data_root = tmp_path
+      x = Dataset(split="train").load_x()
+    assert x.ndim == 2
+    assert x.shape[0] > 0
 
 
 # ---------------------------------------------------------------------------

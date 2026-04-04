@@ -3,11 +3,11 @@
 import argparse
 import asyncio
 import math
-import os
 from typing import Iterable
 
 import psycopg2
 from psycopg2.extras import Json
+from training.etl.dsn import resolve_postgres_dsn
 from training.etl.ingest.scrape_github_issues_improved import scrape_all_issues
 from training.etl.transform.run_transform import transform_records
 
@@ -86,10 +86,7 @@ def upsert_tickets(
   dsn: str | None = None,
 ) -> int:
   """Upsert transformed tickets into the `tickets` table."""
-  resolved_dsn = dsn or os.environ.get("DATABASE_URL")
-  if not resolved_dsn:
-    msg = "No Postgres DSN provided. Pass `dsn` or set DATABASE_URL."
-    raise RuntimeError(msg)
+  resolved_dsn = resolve_postgres_dsn(dsn)
 
   sql = """
   INSERT INTO tickets (
@@ -182,10 +179,7 @@ def upsert_assignments(
   dsn: str | None = None,
 ) -> tuple[int, int]:
   """Upsert assignments for rows with assignees that exist in `users`."""
-  resolved_dsn = dsn or os.environ.get("DATABASE_URL")
-  if not resolved_dsn:
-    msg = "No Postgres DSN provided. Pass `dsn` or set DATABASE_URL."
-    raise RuntimeError(msg)
+  resolved_dsn = resolve_postgres_dsn(dsn)
 
   sql = """
   INSERT INTO assignments (ticket_id, engineer_id, assigned_at)
