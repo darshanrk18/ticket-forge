@@ -91,6 +91,30 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: just gcp-airflow-deploy
 
+      - name: Wait for Airflow VM SSH readiness
+        run: |
+          set -euo pipefail
+
+          instance_name=$(terraform -chdir=terraform output -raw airflow_vm_instance_name)
+
+          for attempt in {1..30}; do
+            if gcloud compute ssh "${instance_name}" \
+              --project="${TF_VAR_project_id}" \
+              --zone="${TF_VAR_zone}" \
+              --tunnel-through-iap \
+              --quiet \
+              --command='echo ssh-ready' >/dev/null 2>&1; then
+              echo "Airflow VM is reachable via IAP SSH"
+              exit 0
+            fi
+
+            echo "Waiting for Airflow VM SSH (attempt ${attempt}/30)"
+            sleep 10
+          done
+
+          echo "::error::Timed out waiting for Airflow VM SSH readiness"
+          exit 1
+
       - name: Install PostgreSQL client and Cloud SQL Auth Proxy
         run: |
           sudo apt-get update -y

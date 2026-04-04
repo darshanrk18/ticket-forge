@@ -166,6 +166,24 @@ gcp-airflow-deploy:
     gmail_username_secret_id="${TF_VAR_airflow_gmail_app_username_secret_id:-airflow-gmail-app-username-prod}"
     gmail_password_secret_id="${TF_VAR_airflow_gmail_app_password_secret_id:-airflow-gmail-app-password-prod}"
 
+    add_secret_version_if_changed() {
+        local secret_id="$1"
+        local secret_value="$2"
+
+        local desired_b64
+        desired_b64="$(printf '%s' "${secret_value}" | base64 -w0)"
+
+        local latest_b64=""
+        if latest_b64="$(gcloud secrets versions access latest --project="${TF_VAR_project_id}" --secret="${secret_id}" 2>/dev/null | base64 -w0)"; then
+            if [[ "${latest_b64}" == "${desired_b64}" ]]; then
+                echo "Secret ${secret_id} unchanged; skipping new secret version"
+                return 0
+            fi
+        fi
+
+        printf '%s' "${secret_value}" | gcloud secrets versions add "${secret_id}" --project="${TF_VAR_project_id}" --data-file=-
+    }
+
     repo_ref="${AIRFLOW_REPO_REF:-$(git rev-parse HEAD)}"
 
     # Fail fast when deploying with a detached SHA that is not visible on origin.
@@ -199,9 +217,9 @@ gcp-airflow-deploy:
         -var="zone=us-east1-b" \
         -var="environment=prod"
 
-    printf '%s' "${github_token_value}" | gcloud secrets versions add "${github_token_secret_id}" --project="${TF_VAR_project_id}" --data-file=-
-    printf '%s' "${GMAIL_APP_USERNAME}" | gcloud secrets versions add "${gmail_username_secret_id}" --project="${TF_VAR_project_id}" --data-file=-
-    printf '%s' "${GMAIL_APP_PASSWORD}" | gcloud secrets versions add "${gmail_password_secret_id}" --project="${TF_VAR_project_id}" --data-file=-
+    add_secret_version_if_changed "${github_token_secret_id}" "${github_token_value}"
+    add_secret_version_if_changed "${gmail_username_secret_id}" "${GMAIL_APP_USERNAME}"
+    add_secret_version_if_changed "${gmail_password_secret_id}" "${GMAIL_APP_PASSWORD}"
 
     terraform -chdir=terraform apply -auto-approve \
       -var="project_id=${TF_VAR_project_id}" \
