@@ -1,6 +1,6 @@
 # Training Module
 
-ML training pipeline for ticket time prediction. Includes ETL (GitHub issue ingestion, feature engineering), model training (Random Forest, Linear, SVM, XGBoost), and bias detection/mitigation.
+ML training pipeline for ticket time prediction. The `training` module now focuses on dataset loading, analysis, model training, and bias detection/mitigation. ETL and ingestion workflows live in [`apps/pipelines`](../pipelines/README.md).
 
 ## Setup
 
@@ -43,7 +43,7 @@ training/
     └── utils/             # Shared training utilities and harness
 ```
 
-## ETL Pipeline
+## Pipeline Dependency
 
 **Purpose:** Ingest GitHub issues from Ansible, Terraform, and Prometheus repos. Generate embeddings, extract keywords, detect anomalies, and mitigate bias.
 
@@ -71,7 +71,7 @@ training/
 
 10. **Load to Database** (`load_tickets_to_db`) — **Starts after Step 4, parallel to bias path (Steps 6-9).** Ensures assignee profiles exist (coldstart), then upserts tickets and assignments into Postgres. Vectors stored with pgvector extension.
 
-11. **Replay Closed Tickets** (`replay_closed_tickets`) — Applies Experience Decay formula to engineer profiles for completed assignments using `training.etl.postload.replay`. Updates `profile_vector` in `users` table: `profile_vector ← α · profile_vector + (1 − α) · ticket_vector` (default α = 0.95).
+11. **Replay Closed Tickets** (`replay_closed_tickets`) — Applies Experience Decay formula to engineer profiles for completed assignments using `pipelines.etl.postload.replay_tickets`. Updates `profile_vector` in `users` table: `profile_vector ← α · profile_vector + (1 − α) · ticket_vector` (default α = 0.95).
 
 12. **Send Email** (`send_status_email`) — Waits for all paths (Steps 9, 11, 5), sends Gmail notification to `mlopsgroup29@gmail.com` with anomaly and bias reports. Runs on both success and failure.
 
@@ -89,10 +89,10 @@ training/
 
 ```bash
 # Scrape GitHub issues using GraphQL API (active scraper)
-uv run -m training.etl.ingest.scrape_github_issues_graphql
+uv run -m pipelines.etl.ingest.scrape_github_issues_improved
 
 # Transform raw data to feature-engineered format
-uv run -m training.etl.ingest.transform
+uv run -m pipelines.etl.transform.run_transform
 ```
 
 **GitHub Scrapers:**

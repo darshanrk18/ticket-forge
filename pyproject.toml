@@ -8,6 +8,7 @@ dependencies = []
 
 [tool.uv.workspace]
 members = [
+    "apps/pipelines",
     "apps/training",
     "apps/web-backend",
     "libs/*",
@@ -81,6 +82,7 @@ ban-relative-imports = "all"
 [tool.pytest.ini_options]
 pythonpath = [
     ".",
+    "apps/pipelines",
     "apps/web-backend",
     "apps/training",
     "libs/ml-core",
@@ -103,6 +105,7 @@ exclude = [
     "dags/**",
 ]
 extraPaths = [
+    "apps/pipelines",
     "apps/web-backend",
     "apps/training",
     "libs/ml-core",

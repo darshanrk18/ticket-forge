@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-from training.etl.transform.run_transform import transform_records
+from pipelines.etl.transform.run_transform import transform_records
 
 
 class TestTransformRecords:
@@ -51,8 +51,8 @@ class TestTransformRecords:
       },
     ]
 
-  @patch("training.etl.transform.run_transform.embed_text")
-  @patch("training.etl.transform.run_transform.enrich_engineer_features")
+  @patch("pipelines.etl.transform.run_transform.embed_text")
+  @patch("pipelines.etl.transform.run_transform.enrich_engineer_features")
   def test_transform_records_returns_enriched_data(
     self,
     mock_enrich: MagicMock,
@@ -80,8 +80,8 @@ class TestTransformRecords:
       assert "embedding_model" in record
       assert record["embedding_model"] == "all-MiniLM-L6-v2"
 
-  @patch("training.etl.transform.run_transform.embed_text")
-  @patch("training.etl.transform.run_transform.enrich_engineer_features")
+  @patch("pipelines.etl.transform.run_transform.embed_text")
+  @patch("pipelines.etl.transform.run_transform.enrich_engineer_features")
   def test_transform_records_handles_empty_input(
     self,
     mock_enrich: MagicMock,
@@ -91,8 +91,8 @@ class TestTransformRecords:
     result = transform_records([])
     assert result == []
 
-  @patch("training.etl.transform.run_transform.embed_text")
-  @patch("training.etl.transform.run_transform.enrich_engineer_features")
+  @patch("pipelines.etl.transform.run_transform.embed_text")
+  @patch("pipelines.etl.transform.run_transform.enrich_engineer_features")
   def test_transform_records_fills_missing_fields(
     self,
     mock_enrich: MagicMock,
@@ -123,8 +123,8 @@ class TestTransformRecords:
     assert result[0]["assignee"] is not None or pd.isna(result[0]["assignee"])
     assert result[0]["seniority"] is not None
 
-  @patch("training.etl.transform.run_transform.embed_text")
-  @patch("training.etl.transform.run_transform.enrich_engineer_features")
+  @patch("pipelines.etl.transform.run_transform.embed_text")
+  @patch("pipelines.etl.transform.run_transform.enrich_engineer_features")
   def test_transform_records_computes_temporal_features(
     self,
     mock_enrich: MagicMock,

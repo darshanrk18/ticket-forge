@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from training.etl.postload.replay_tickets import (
+from pipelines.etl.postload.replay_tickets import (
   DEFAULT_ALPHA,
   ClosedTicketAssignment,
   TicketReplayer,
@@ -113,7 +113,7 @@ class TestTicketReplayerInit:
 class TestReplayEmpty:
   """Edge case: no closed ticket assignments exist."""
 
-  @patch("training.etl.postload.replay_tickets.psycopg2")
+  @patch("pipelines.etl.postload.replay_tickets.psycopg2")
   def test_replay_returns_zero_when_no_tickets(self, mock_pg: MagicMock) -> None:
     """DB returns no rows for the given IDs."""
     mock_conn = MagicMock()
@@ -142,7 +142,7 @@ class TestReplayEmpty:
 class TestReplaySingle:
   """One closed ticket assigned to one engineer."""
 
-  @patch("training.etl.postload.replay_tickets.psycopg2")
+  @patch("pipelines.etl.postload.replay_tickets.psycopg2")
   def test_single_ticket_applies_decay(self, mock_pg: MagicMock) -> None:
     """One ticket produces one UPDATE with correct alpha params."""
     assignment = _make_assignment()
@@ -189,7 +189,7 @@ class TestReplaySingle:
 class TestReplayMultiple:
   """Multiple tickets processed in the order the DB returns them."""
 
-  @patch("training.etl.postload.replay_tickets.psycopg2")
+  @patch("pipelines.etl.postload.replay_tickets.psycopg2")
   def test_multiple_tickets_processed_in_order(self, mock_pg: MagicMock) -> None:
     """Tickets are replayed in the chronological order returned by the DB."""
     a1 = _make_assignment(ticket_id="T-1", closed_at="2025-01-01T00:00:00+00:00")
@@ -234,7 +234,7 @@ class TestReplayMultiple:
 class TestReplayError:
   """DB errors should cause rollback and re-raise."""
 
-  @patch("training.etl.postload.replay_tickets.psycopg2")
+  @patch("pipelines.etl.postload.replay_tickets.psycopg2")
   def test_db_error_rolls_back(self, mock_pg: MagicMock) -> None:
     """A DB exception triggers rollback and re-raise."""
     assignment = _make_assignment()
@@ -265,7 +265,7 @@ class TestReplayError:
 class TestFetchQuery:
   """Verify the fetch query includes the right tables and ordering."""
 
-  @patch("training.etl.postload.replay_tickets.psycopg2")
+  @patch("pipelines.etl.postload.replay_tickets.psycopg2")
   def test_fetch_query_joins_and_orders(self, mock_pg: MagicMock) -> None:
     """SELECT joins assignments and users, filters by ANY, orders ASC."""
     mock_conn = MagicMock()
@@ -290,7 +290,7 @@ class TestFetchQuery:
     sql_args = select_call[0][1]
     assert sql_args == (["T-1", "T-2"],)
 
-  @patch("training.etl.postload.replay_tickets.psycopg2")
+  @patch("pipelines.etl.postload.replay_tickets.psycopg2")
   def test_replay_skips_assignments_already_marked_replayed(
     self, mock_pg: MagicMock
   ) -> None:
@@ -321,7 +321,7 @@ class TestFetchQuery:
 class TestKeywordExtraction:
   """Keywords from ticket text are passed to the UPDATE."""
 
-  @patch("training.etl.postload.replay_tickets.psycopg2")
+  @patch("pipelines.etl.postload.replay_tickets.psycopg2")
   def test_keywords_extracted_from_ticket_text(self, mock_pg: MagicMock) -> None:
     """Keywords from title+description are passed to the UPDATE."""
     assignment = _make_assignment(
@@ -355,7 +355,7 @@ class TestKeywordExtraction:
 class TestCLI:
   """Tests for the ``main()`` CLI wrapper."""
 
-  @patch("training.etl.postload.replay_tickets.TicketReplayer")
+  @patch("pipelines.etl.postload.replay_tickets.TicketReplayer")
   def test_main_with_ticket_ids(self, mock_cls: MagicMock) -> None:
     """Positional ticket IDs are forwarded to replay()."""
     mock_instance = MagicMock()
@@ -367,7 +367,7 @@ class TestCLI:
     mock_cls.assert_called_once_with(dsn="postgresql://x", alpha=DEFAULT_ALPHA)
     mock_instance.replay.assert_called_once_with(["T-1", "T-2"])
 
-  @patch("training.etl.postload.replay_tickets.TicketReplayer")
+  @patch("pipelines.etl.postload.replay_tickets.TicketReplayer")
   def test_main_custom_alpha(self, mock_cls: MagicMock) -> None:
     """--alpha is forwarded to the TicketReplayer constructor."""
     mock_instance = MagicMock()
@@ -379,7 +379,7 @@ class TestCLI:
     mock_cls.assert_called_once_with(dsn="postgresql://x", alpha=0.8)
     mock_instance.replay.assert_called_once_with(["T-1"])
 
-  @patch("training.etl.postload.replay_tickets.TicketReplayer")
+  @patch("pipelines.etl.postload.replay_tickets.TicketReplayer")
   def test_main_zero_count_message(
     self, mock_cls: MagicMock, capsys: pytest.CaptureFixture
   ) -> None:
@@ -393,7 +393,7 @@ class TestCLI:
     captured = capsys.readouterr()
     assert "nothing to replay" in captured.out.lower()
 
-  @patch("training.etl.postload.replay_tickets.TicketReplayer")
+  @patch("pipelines.etl.postload.replay_tickets.TicketReplayer")
   def test_main_from_file(self, mock_cls: MagicMock, tmp_path: Path) -> None:
     """--file reads ticket IDs from a text file."""
     mock_instance = MagicMock()

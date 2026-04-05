@@ -10,7 +10,6 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from airflow import DAG
 from airflow.exceptions import AirflowFailException
@@ -21,6 +20,7 @@ from email_callbacks import send_dag_status_email
 # Make workspace packages importable from Airflow's DAG context.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 for path in (
+  REPO_ROOT / "apps" / "pipelines",
   REPO_ROOT / "apps" / "training",
   REPO_ROOT / "libs" / "ml-core",
   REPO_ROOT / "libs" / "shared",
@@ -29,7 +29,7 @@ for path in (
   if path_str not in sys.path:
     sys.path.append(path_str)
 
-from training.etl.ingest.resume.coldstart import ColdStartManager
+from pipelines.etl.ingest.resume.coldstart import ColdStartManager
 
 DAG_ID = "resume_etl"
 
@@ -43,7 +43,7 @@ def _require_database_url() -> str:
   return dsn
 
 
-def validate_runtime_config(**context: Any) -> dict[str, Any]:
+def validate_runtime_config(**context: object) -> dict[str, object]:
   """Read dag_run.conf and normalize resume payload config."""
   dag_run = context.get("dag_run")
   conf = dag_run.conf if dag_run and dag_run.conf else {}
@@ -65,7 +65,7 @@ def validate_runtime_config(**context: Any) -> dict[str, Any]:
   return runtime
 
 
-def ingest_resumes_from_conf(**context: Any) -> dict[str, int]:
+def ingest_resumes_from_conf(**context: object) -> dict[str, int]:
   """Ingest resume payloads from dag_run.conf into users table profiles."""
   # Pull from XCom
   runtime = context["task_instance"].xcom_pull(

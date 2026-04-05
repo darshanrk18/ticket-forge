@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from training.etl.transform.run_transform import transform_records
+from pipelines.etl.transform.run_transform import transform_records
 
 INPUT_PATH = Path("data/github_issues/sample_tickets.json")
 OUTPUT_PATH = Path("data/github_issues/sample_tickets_transformed.jsonl")

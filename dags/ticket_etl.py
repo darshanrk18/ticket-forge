@@ -23,6 +23,7 @@ from shared.configuration import Paths
 # Make workspace packages importable from Airflow's DAG context.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 for path in (
+  REPO_ROOT / "apps" / "pipelines",
   REPO_ROOT / "apps" / "training",
   REPO_ROOT / "libs" / "ml-core",
   REPO_ROOT / "libs" / "shared",
@@ -96,7 +97,7 @@ def validate_runtime_config(**context: object) -> dict[str, Any]:
 
 def scrape_github_issues(**context: object) -> dict[str, Any]:
   """Scrape GitHub issues with optional limit_per_state."""
-  from training.etl.ingest.scrape_github_issues_improved import scrape_all_issues
+  from pipelines.etl.ingest.scrape_github_issues_improved import scrape_all_issues
 
   runtime = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="validate_runtime_config", key="runtime"
@@ -122,7 +123,7 @@ def scrape_github_issues(**context: object) -> dict[str, Any]:
 
 def run_transform(**context: object) -> dict[str, Any]:
   """Transform raw records into ticket features."""
-  from training.etl.transform.run_transform import transform_records
+  from pipelines.etl.transform.run_transform import transform_records
 
   raw_path = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="scrape_github_issues", key="raw_path"
@@ -362,7 +363,7 @@ def save_dataset_and_weights(**context: object) -> dict[str, Any]:
 
 def upload_output_dir_to_gcs(**context: object) -> dict[str, Any]:
   """Upload full run output directory to GCS and update index.json."""
-  from training.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
+  from pipelines.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
 
   runtime = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="validate_runtime_config", key="runtime"
@@ -385,8 +386,8 @@ def upload_output_dir_to_gcs(**context: object) -> dict[str, Any]:
 
 def load_tickets_to_db(**context: object) -> dict[str, int]:
   """Load transformed tickets and assignments into Postgres."""
-  from training.etl.ingest.resume.coldstart import ensure_profiles_for_tickets
-  from training.etl.postload.load_tickets import (
+  from pipelines.etl.ingest.resume.coldstart import ensure_profiles_for_tickets
+  from pipelines.etl.postload.load_tickets import (
     upsert_assignments,
     upsert_tickets,
   )
@@ -430,7 +431,7 @@ def load_tickets_to_db(**context: object) -> dict[str, int]:
 
 def replay_closed_tickets(**context: object) -> dict[str, int]:
   """Replay newly imported closed tickets to update engineer profiles."""
-  from training.etl.postload.replay_tickets import TicketReplayer
+  from pipelines.etl.postload.replay_tickets import TicketReplayer
 
   transform_path = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="run_transform", key="transform_path"

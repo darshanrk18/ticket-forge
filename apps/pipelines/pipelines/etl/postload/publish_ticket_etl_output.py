@@ -12,8 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, cast
 
-from google.cloud import storage
-from google.cloud.storage import transfer_manager
+try:
+  from google.cloud import storage
+  from google.cloud.storage import transfer_manager
+except ModuleNotFoundError:
+  storage = None
+  transfer_manager = None
 from shared.configuration import getenv_or
 from shared.logging import get_logger
 
@@ -49,7 +53,7 @@ class _BucketProtocol(Protocol):
     ...
 
 
-def _build_storage_client() -> storage.Client:
+def _build_storage_client() -> object:
   """Create a Cloud Storage client using resilient credential resolution.
 
   Resolution order:
@@ -63,6 +67,10 @@ def _build_storage_client() -> storage.Client:
   Raises:
       FileNotFoundError: If explicit credentials env points to a missing file.
   """
+  if storage is None:
+    msg = "google-cloud-storage is required to publish ticket ETL artifacts."
+    raise ModuleNotFoundError(msg)
+
   explicit_path_raw = getenv_or("GOOGLE_APPLICATION_CREDENTIALS")
   explicit_path = explicit_path_raw.strip() if explicit_path_raw else ""
 
@@ -207,6 +215,10 @@ def _upload_output_files(
   Raises:
       RuntimeError: If one or more files fail to upload.
   """
+  if transfer_manager is None:
+    msg = "google-cloud-storage is required to upload ticket ETL artifacts."
+    raise ModuleNotFoundError(msg)
+
   relative_paths = [
     file_path.relative_to(output_dir).as_posix() for file_path in files_to_upload
   ]

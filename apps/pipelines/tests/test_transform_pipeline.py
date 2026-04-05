@@ -1,9 +1,9 @@
 """Tests for transformation pipeline."""
 
-from training.etl.transform.embed import embed_text
-from training.etl.transform.keyword_extraction import extract_keywords
-from training.etl.transform.normalize_text import normalize_ticket_text
-from training.etl.transform.temporal_features import (
+from pipelines.etl.transform.embed import embed_text
+from pipelines.etl.transform.keyword_extraction import extract_keywords
+from pipelines.etl.transform.normalize_text import normalize_ticket_text
+from pipelines.etl.transform.temporal_features import (
   compute_business_completion_hours,
 )
 

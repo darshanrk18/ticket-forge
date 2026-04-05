@@ -279,7 +279,7 @@ class TestTicketEtlDag:
 
     captured: dict[str, object] = {}
 
-    publisher_mod = types.ModuleType("training.etl.postload.publish_ticket_etl_output")
+    publisher_mod = types.ModuleType("pipelines.etl.postload.publish_ticket_etl_output")
 
     def _publish_stub(*, output_dir: Path, bucket_uri: str, run_timestamp: str) -> dict:
       captured["output_dir"] = output_dir
@@ -295,7 +295,7 @@ class TestTicketEtlDag:
     publisher_mod.publish_ticket_etl_output = _publish_stub  # type: ignore[attr-defined]
     monkeypatch.setitem(
       sys.modules,
-      "training.etl.postload.publish_ticket_etl_output",
+      "pipelines.etl.postload.publish_ticket_etl_output",
       publisher_mod,
     )
 
@@ -377,7 +377,7 @@ class TestTicketEtlFromFileDag:
 
     captured: dict[str, object] = {}
 
-    publisher_mod = types.ModuleType("training.etl.postload.publish_ticket_etl_output")
+    publisher_mod = types.ModuleType("pipelines.etl.postload.publish_ticket_etl_output")
 
     def _publish_stub(*, output_dir: Path, bucket_uri: str, run_timestamp: str) -> dict:
       captured["output_dir"] = output_dir
@@ -393,7 +393,7 @@ class TestTicketEtlFromFileDag:
     publisher_mod.publish_ticket_etl_output = _publish_stub  # type: ignore[attr-defined]
     monkeypatch.setitem(
       sys.modules,
-      "training.etl.postload.publish_ticket_etl_output",
+      "pipelines.etl.postload.publish_ticket_etl_output",
       publisher_mod,
     )
 

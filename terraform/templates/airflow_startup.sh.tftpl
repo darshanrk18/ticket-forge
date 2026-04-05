@@ -42,6 +42,7 @@ sudo -u airflow /usr/local/bin/uv pip install --python /opt/ticket-forge/.venv/b
 sudo -u airflow /usr/local/bin/uv pip install --python /opt/ticket-forge/.venv/bin/python \
   -e /opt/ticket-forge/libs/shared \
   -e /opt/ticket-forge/libs/ml-core \
+  -e /opt/ticket-forge/apps/pipelines \
   -e /opt/ticket-forge/apps/training
 sudo -u airflow /usr/local/bin/uv pip check --python /opt/ticket-forge/.venv/bin/python
 
@@ -103,7 +104,7 @@ GITHUB_TOKEN=$${GITHUB_TOKEN}
 GMAIL_APP_USERNAME=$${GMAIL_APP_USERNAME}
 GMAIL_APP_PASSWORD=$${GMAIL_APP_PASSWORD}
 AIRFLOW_HOME=/opt/airflow
-PYTHONPATH=/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared
+PYTHONPATH=/opt/ticket-forge/apps/pipelines:/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared
 EOF
 sudo chown root:airflow /etc/default/airflow-runtime
 sudo chmod 0640 /etc/default/airflow-runtime

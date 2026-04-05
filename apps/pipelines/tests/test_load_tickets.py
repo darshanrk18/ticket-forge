@@ -6,7 +6,7 @@ import asyncio
 from types import TracebackType
 from unittest.mock import patch
 
-from training.etl.postload import load_tickets
+from pipelines.etl.postload import load_tickets
 
 
 class _DummyCursor:
@@ -115,7 +115,7 @@ class TestUpserts:
     }
 
     with patch(
-      "training.etl.postload.load_tickets.psycopg2.connect",
+      "pipelines.etl.postload.load_tickets.psycopg2.connect",
       return_value=conn,
     ):
       count = load_tickets.upsert_tickets([ticket], dsn="postgresql://fake")
@@ -154,7 +154,7 @@ class TestUpserts:
     ]
 
     with patch(
-      "training.etl.postload.load_tickets.psycopg2.connect",
+      "pipelines.etl.postload.load_tickets.psycopg2.connect",
       return_value=conn,
     ):
       upserted, missing = load_tickets.upsert_assignments(
@@ -203,19 +203,19 @@ class TestPipeline:
 
     with (
       patch(
-        "training.etl.postload.load_tickets.scrape_all_issues",
+        "pipelines.etl.postload.load_tickets.scrape_all_issues",
         _fake_scrape,
       ),
       patch(
-        "training.etl.postload.load_tickets.transform_records",
+        "pipelines.etl.postload.load_tickets.transform_records",
         _fake_transform,
       ),
       patch(
-        "training.etl.postload.load_tickets.upsert_tickets",
+        "pipelines.etl.postload.load_tickets.upsert_tickets",
         _fake_upsert_tickets,
       ),
       patch(
-        "training.etl.postload.load_tickets.upsert_assignments",
+        "pipelines.etl.postload.load_tickets.upsert_assignments",
         _fake_upsert_assignments,
       ),
     ):

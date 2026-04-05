@@ -1,11 +1,12 @@
 import pandas as pd
 import torch
 from tqdm import tqdm
-from training.etl.transform.embed import embed_text
-from training.etl.transform.engineer_features import enrich_engineer_features
-from training.etl.transform.keyword_extraction import extract_keywords
-from training.etl.transform.normalize_text import normalize_ticket_text
-from training.etl.transform.temporal_features import compute_business_completion_hours
+
+from pipelines.etl.transform.embed import embed_text
+from pipelines.etl.transform.engineer_features import enrich_engineer_features
+from pipelines.etl.transform.keyword_extraction import extract_keywords
+from pipelines.etl.transform.normalize_text import normalize_ticket_text
+from pipelines.etl.transform.temporal_features import compute_business_completion_hours
 
 
 def transform_records(records: list[dict]) -> list[dict]:
@@ -65,7 +66,9 @@ def transform_records(records: list[dict]) -> list[dict]:
 
 def main() -> None:
   """Standalone runner hint."""
-  print("Use training.etl.postload.load_tickets to run scrape -> transform -> db load.")
+  print(
+    "Use pipelines.etl.postload.load_tickets to run scrape -> transform -> db load."
+  )
 
 
 if __name__ == "__main__":

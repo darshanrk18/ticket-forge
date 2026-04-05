@@ -160,7 +160,7 @@ def test_publish_ticket_etl_output_uploads_all_files_and_updates_index(
   tmp_path: Path,
 ) -> None:
   """Publishes full directory with compressed dataset and updates index."""
-  from training.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
+  from pipelines.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
 
   run_timestamp = "2026-04-03T120000Z"
   output_dir = tmp_path / f"github_issues-{run_timestamp}"
@@ -187,9 +187,9 @@ def test_publish_ticket_etl_output_uploads_all_files_and_updates_index(
   )
 
   with (
-    patch("training.etl.postload.publish_ticket_etl_output.storage") as mock_storage,
+    patch("pipelines.etl.postload.publish_ticket_etl_output.storage") as mock_storage,
     patch(
-      "training.etl.postload.publish_ticket_etl_output.transfer_manager"
+      "pipelines.etl.postload.publish_ticket_etl_output.transfer_manager"
     ) as mock_transfer_manager,
   ):
     mock_storage.Client.return_value = fake_client
@@ -231,13 +231,15 @@ def test_publish_ticket_etl_output_requires_primary_dataset_file(
   tmp_path: Path,
 ) -> None:
   """Fails fast when tickets_transformed_improved.jsonl.gz is missing."""
-  from training.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
+  from pipelines.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
 
   output_dir = tmp_path / "github_issues-2026-04-03T120500Z"
   output_dir.mkdir(parents=True)
   _write_output_file(output_dir / "sample_weights.json", "{}\n")
 
-  with patch("training.etl.postload.publish_ticket_etl_output.storage") as mock_storage:
+  with patch(
+    "pipelines.etl.postload.publish_ticket_etl_output.storage"
+  ) as mock_storage:
     mock_storage.Client.return_value = FakeClient()
     with pytest.raises(FileNotFoundError, match="Required dataset file not found"):
       publish_ticket_etl_output(
@@ -249,13 +251,15 @@ def test_publish_ticket_etl_output_requires_primary_dataset_file(
 
 def test_publish_ticket_etl_output_rejects_bucket_object_path(tmp_path: Path) -> None:
   """Rejects bucket URIs that include object prefixes."""
-  from training.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
+  from pipelines.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
 
   output_dir = tmp_path / "github_issues-2026-04-03T121000Z"
   output_dir.mkdir(parents=True)
   _write_gzip_output_file(output_dir / "tickets_transformed_improved.jsonl.gz", "{}\n")
 
-  with patch("training.etl.postload.publish_ticket_etl_output.storage") as mock_storage:
+  with patch(
+    "pipelines.etl.postload.publish_ticket_etl_output.storage"
+  ) as mock_storage:
     mock_storage.Client.return_value = FakeClient()
     with pytest.raises(ValueError, match="must not include an object path"):
       publish_ticket_etl_output(
@@ -267,7 +271,7 @@ def test_publish_ticket_etl_output_rejects_bucket_object_path(tmp_path: Path) ->
 
 def test_publish_ticket_etl_output_raises_on_malformed_index(tmp_path: Path) -> None:
   """Fails when existing index.json cannot be parsed as JSON."""
-  from training.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
+  from pipelines.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
 
   output_dir = tmp_path / "github_issues-2026-04-03T121500Z"
   output_dir.mkdir(parents=True)
@@ -278,9 +282,9 @@ def test_publish_ticket_etl_output_raises_on_malformed_index(tmp_path: Path) -> 
   bucket.blob("index.json").upload_from_string("{this-is-not-json")
 
   with (
-    patch("training.etl.postload.publish_ticket_etl_output.storage") as mock_storage,
+    patch("pipelines.etl.postload.publish_ticket_etl_output.storage") as mock_storage,
     patch(
-      "training.etl.postload.publish_ticket_etl_output.transfer_manager"
+      "pipelines.etl.postload.publish_ticket_etl_output.transfer_manager"
     ) as mock_transfer_manager,
   ):
     mock_storage.Client.return_value = fake_client

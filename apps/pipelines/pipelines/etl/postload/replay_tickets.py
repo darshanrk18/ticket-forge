@@ -27,9 +27,9 @@ Requires:
 
 Usage::
 
-    python -m training.etl.postload.replay_tickets \
+    python -m pipelines.etl.postload.replay_tickets \
         T-1 T-2 T-3 [--dsn DSN] [--alpha 0.95]
-    python -m training.etl.postload.replay_tickets \
+    python -m pipelines.etl.postload.replay_tickets \
         --file ticket_ids.txt [--dsn DSN]
 """
 
@@ -43,7 +43,8 @@ from ml_core.keywords import get_keyword_extractor
 from ml_core.profiles.updater import ProfileUpdater
 from psycopg2.extras import RealDictCursor
 from shared.logging import get_logger
-from training.etl.dsn import resolve_postgres_dsn
+
+from pipelines.etl.dsn import resolve_postgres_dsn
 
 logger = get_logger(__name__)
 

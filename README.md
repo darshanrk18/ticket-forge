@@ -13,7 +13,8 @@ TicketForge is an AI-Powered DevOps ticket assignment system capable of automati
 ```
 .
 ├── apps
-│   ├── training         # ML Pipeline: Data scraping, ETL, and model training jobs
+│   ├── pipelines        # Data Pipeline: GitHub ingest, ETL, replay, artifact publication
+│   ├── training         # ML Pipeline: Dataset analysis, training, and evaluation jobs
 │   ├── web-backend      # API Service: Serves model predictions & business logic
 │   └── web-frontend     # User Interface: Dashboard for interacting with the model
 ├── libs
@@ -42,6 +43,7 @@ TicketForge is an AI-Powered DevOps ticket assignment system capable of automati
 Each workspace has its own README with detailed setup and usage instructions:
 
 ### Applications
+- [**pipelines**](./apps/pipelines/README.md) - Ticket ingestion and ETL workflows used by Airflow
 - [**training**](./apps/training/README.md) - ML model training pipeline for ticket time prediction (which is run with [**docker and airflow**](./docker/README.md))
 - [**web-backend**](./apps/web-backend/README.md) - FastAPI service for model serving and business logic
 - [**web-frontend**](./apps/web-frontend/README.md) - Astro-based dashboard UI
@@ -78,7 +80,7 @@ Here we guide you through the steps to install the tooling and dependencies need
 
 4. Set environment variables in `.env` file:
    - If using terraform locally, see setup section in [**terraform**](./terraform/README.md) folder
-   - If doing training ETL pipeline, see setup section in [**training**](./apps/training/README.md)
+   - If doing ticket ingestion or ETL setup, see [**pipelines**](./apps/pipelines/README.md); for model training setup, see [**training**](./apps/training/README.md)
 
 5. We have configured airflow to run locally using docker. To run airflow locally and see CLI commands for running pipelines, please follow instructions in [**docker**](./docker/README.md)
 

@@ -32,6 +32,14 @@ def _top_level_function_names(module: ast.Module) -> set[str]:
   return {node.name for node in module.body if isinstance(node, ast.FunctionDef)}
 
 
+def _contains_string_literal(module: ast.Module, value: str) -> bool:
+  """Return whether a module contains a given string literal."""
+  for node in ast.walk(module):
+    if isinstance(node, ast.Constant) and node.value == value:
+      return True
+  return False
+
+
 class TestDagFiles:
   """Validate DAG source files exist and declare expected metadata."""
 
@@ -73,3 +81,10 @@ class TestDagFiles:
     function_names = _top_level_function_names(module)
     for fn in expected_functions:
       assert fn in function_names
+
+  def test_resume_ingest_bootstraps_pipelines_workspace(self) -> None:
+    """Resume ingest DAG should add the pipelines workspace to sys.path."""
+    path = DAGS_DIR / "resume_ingest.py"
+    module = _parse_module(path)
+
+    assert _contains_string_literal(module, "pipelines")

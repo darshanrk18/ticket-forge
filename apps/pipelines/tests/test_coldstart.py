@@ -12,7 +12,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from training.etl.ingest.resume.coldstart import (
+from pipelines.etl.ingest.resume.coldstart import (
   EMBEDDING_DIM,
   SIMILARITY_THRESHOLD,
   ColdStartManager,
@@ -141,7 +141,7 @@ class TestMergeUserSources:
   def mgr(self) -> ColdStartManager:
     """Create a ColdStartManager with mocked dependencies."""
     with patch.multiple(
-      "training.etl.ingest.resume.coldstart",
+      "pipelines.etl.ingest.resume.coldstart",
       ResumeExtractor=MagicMock,
       ResumeNormalizer=MagicMock,
       get_embedding_service=MagicMock,
@@ -203,7 +203,7 @@ class TestUpsertStrategyDispatch:
   def mgr(self) -> ColdStartManager:
     """Create a ColdStartManager with mocked dependencies."""
     with patch.multiple(
-      "training.etl.ingest.resume.coldstart",
+      "pipelines.etl.ingest.resume.coldstart",
       ResumeExtractor=MagicMock,
       ResumeNormalizer=MagicMock,
       get_embedding_service=MagicMock,

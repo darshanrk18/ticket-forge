@@ -26,6 +26,7 @@ RUN --mount=type=cache,target=/home/airflow/.cache/uv,uid=50000,gid=0 \
     uv pip install \
     -e /opt/ticket-forge/libs/shared \
     -e /opt/ticket-forge/libs/ml-core \
+    -e /opt/ticket-forge/apps/pipelines \
     -e /opt/ticket-forge/apps/training
 
 USER root
@@ -34,7 +35,7 @@ RUN chown -R airflow:0 /opt/airflow && \
 
 USER airflow
 
-ENV PYTHONPATH=/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared
+ENV PYTHONPATH=/opt/ticket-forge/apps/pipelines:/opt/ticket-forge/apps/training:/opt/ticket-forge/libs/ml-core:/opt/ticket-forge/libs/shared
 ENV AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
 ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
 ENV AIRFLOW_ADMIN_USERNAME=airflow

@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -22,6 +22,7 @@ resolution-markers = [
 [manifest]
 members = [
     "ml-core",
+    "pipelines",
     "research-notebooks",
     "shared",
     "ticket-forge",
@@ -2680,6 +2681,46 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/01/4a/9202e8d11714c1fc5951f2e1ef362f2d7fbc595e1f6717971d5dd750e969/pillow-12.1.1-cp314-cp314t-win32.whl", hash = "sha256:d2912fd8114fc5545aa3a4b5576512f64c55a03f3ebcca4c10194d593d43ea36", size = 6438736, upload-time = "2026-02-11T04:22:46.347Z" },
     { url = "https://files.pythonhosted.org/packages/f3/ca/cbce2327eb9885476b3957b2e82eb12c866a8b16ad77392864ad601022ce/pillow-12.1.1-cp314-cp314t-win_amd64.whl", hash = "sha256:4ceb838d4bd9dab43e06c363cab2eebf63846d6a4aeaea283bbdfd8f1a8ed58b", size = 7182894, upload-time = "2026-02-11T04:22:48.114Z" },
     { url = "https://files.pythonhosted.org/packages/ec/d2/de599c95ba0a973b94410477f8bf0b6f0b5e67360eb89bcb1ad365258beb/pillow-12.1.1-cp314-cp314t-win_arm64.whl", hash = "sha256:7b03048319bfc6170e93bd60728a1af51d3dd7704935feb228c4d4faab35d334", size = 2546446, upload-time = "2026-02-11T04:22:50.342Z" },
+]
+
+[[package]]
+name = "pipelines"
+version = "0.1.0"
+source = { editable = "apps/pipelines" }
+dependencies = [
+    { name = "google-cloud-storage" },
+    { name = "httpx" },
+    { name = "ml-core" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "psycopg2-binary" },
+    { name = "pydantic" },
+    { name = "pymupdf" },
+    { name = "pytesseract" },
+    { name = "python-docx" },
+    { name = "python-dotenv" },
+    { name = "shared" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine != 'x86_64' and sys_platform == 'darwin'" },
+    { name = "torch", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_machine == 'x86_64' or sys_platform != 'darwin'" },
+    { name = "tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "google-cloud-storage", specifier = ">=3.10.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "ml-core", editable = "libs/ml-core" },
+    { name = "pandas", specifier = ">=2.2.0" },
+    { name = "pillow", specifier = ">=12.1.0" },
+    { name = "psycopg2-binary", specifier = ">=2.9.11" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pymupdf", specifier = ">=1.26.7" },
+    { name = "pytesseract", specifier = ">=0.3.13" },
+    { name = "python-docx", specifier = ">=1.2.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "shared", editable = "libs/shared" },
+    { name = "torch", specifier = ">=2.10.0" },
+    { name = "tqdm", specifier = ">=4.65.0" },
 ]
 
 [[package]]

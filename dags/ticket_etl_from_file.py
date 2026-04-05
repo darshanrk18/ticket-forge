@@ -21,6 +21,7 @@ from shared.configuration import Paths
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 for path in (
+  REPO_ROOT / "apps" / "pipelines",
   REPO_ROOT / "apps" / "training",
   REPO_ROOT / "libs" / "ml-core",
   REPO_ROOT / "libs" / "shared",
@@ -90,7 +91,7 @@ def validate_runtime_config(**context: object) -> dict[str, Any]:
 
 def run_transform(**context: object) -> dict[str, Any]:
   """Transform raw records from all_tickets.json into ticket features."""
-  from training.etl.transform.run_transform import transform_records
+  from pipelines.etl.transform.run_transform import transform_records
 
   runtime = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="validate_runtime_config", key="runtime"
@@ -324,7 +325,7 @@ def save_dataset_and_weights(**context: object) -> dict[str, Any]:
 
 def upload_output_dir_to_gcs(**context: object) -> dict[str, Any]:
   """Upload full run output directory to GCS and update index.json."""
-  from training.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
+  from pipelines.etl.postload.publish_ticket_etl_output import publish_ticket_etl_output
 
   runtime = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="validate_runtime_config", key="runtime"
@@ -347,8 +348,8 @@ def upload_output_dir_to_gcs(**context: object) -> dict[str, Any]:
 
 def load_tickets_to_db(**context: object) -> dict[str, int]:
   """Load transformed tickets and assignments into Postgres."""
-  from training.etl.ingest.resume.coldstart import ensure_profiles_for_tickets
-  from training.etl.postload.load_tickets import upsert_assignments, upsert_tickets
+  from pipelines.etl.ingest.resume.coldstart import ensure_profiles_for_tickets
+  from pipelines.etl.postload.load_tickets import upsert_assignments, upsert_tickets
 
   runtime = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="validate_runtime_config", key="runtime"
@@ -388,7 +389,7 @@ def load_tickets_to_db(**context: object) -> dict[str, int]:
 
 def replay_closed_tickets(**context: object) -> dict[str, int]:
   """Replay newly imported closed tickets to update engineer profiles."""
-  from training.etl.postload.replay_tickets import TicketReplayer
+  from pipelines.etl.postload.replay_tickets import TicketReplayer
 
   runtime = context["task_instance"].xcom_pull(  # type: ignore[index, union-attr]
     task_ids="validate_runtime_config", key="runtime"

@@ -28,9 +28,10 @@ from ml_core.keywords import get_keyword_extractor
 from ml_core.profiles.updater import ProfileUpdater
 from psycopg2.extras import RealDictCursor
 from shared import get_logger
-from training.etl.dsn import resolve_postgres_dsn
-from training.etl.ingest.resume.resume_extract import ResumeExtractor
-from training.etl.ingest.resume.resume_normalize import ResumeNormalizer
+
+from pipelines.etl.dsn import resolve_postgres_dsn
+from pipelines.etl.ingest.resume.resume_extract import ResumeExtractor
+from pipelines.etl.ingest.resume.resume_normalize import ResumeNormalizer
 
 logger = get_logger(__name__)
 

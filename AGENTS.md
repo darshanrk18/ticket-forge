@@ -8,7 +8,8 @@ ticket-forge is a monorepo for an ML-powered ticket assignment system. It ingest
 
 ```
 apps/
-  training/         # ML training pipeline, ETL (ingest + postload), bias analysis
+  pipelines/        # Ticket ETL app: ingest, transform, DB load, replay, publish
+  training/         # ML training pipeline, analysis, bias analysis
   web-backend/      # FastAPI REST API (routes → services → models)
   web-frontend/     # Astro frontend
 libs/
@@ -77,7 +78,7 @@ Always lint before committing. Pre-commit hooks enforce this automatically.
   - `routes/` — FastAPI routers. Thin handlers that parse requests and call services. No business logic.
   - `services/` — Business logic and orchestration. May call `ml-core` or the database.
   - `models/` — Pydantic request/response models and DB data classes. No side effects.
-- **ETL pipeline** — `apps/training/training/etl/` separates:
+- **ETL pipeline** — `apps/pipelines/pipelines/etl/` separates:
   - `ingest/` — data acquisition (scrapers, CSV conversion, resume extraction, coldstart).
   - `postload/` — post-ingestion processing (ticket replay for profile history).
 - **Configuration** — use `shared.configuration.Paths` for all file paths. Use `shared.logging.get_logger(__name__)` for logging. Never hard-code paths or use `print()` for diagnostics. Use `shared.configuration.getenv` and `shared.configuration.getenv_or` for loading environemtn variables. Never use `os.getenv()` unless required.

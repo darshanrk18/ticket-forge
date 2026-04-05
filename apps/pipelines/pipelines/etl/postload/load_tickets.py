@@ -7,9 +7,10 @@ from typing import Iterable
 
 import psycopg2
 from psycopg2.extras import Json
-from training.etl.dsn import resolve_postgres_dsn
-from training.etl.ingest.scrape_github_issues_improved import scrape_all_issues
-from training.etl.transform.run_transform import transform_records
+
+from pipelines.etl.dsn import resolve_postgres_dsn
+from pipelines.etl.ingest.scrape_github_issues_improved import scrape_all_issues
+from pipelines.etl.transform.run_transform import transform_records
 
 EMBEDDING_DIM = 384
 
