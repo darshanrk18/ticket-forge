@@ -1,6 +1,7 @@
 """Data profiling script using Great Expectations and custom skew detection."""
 
 import argparse
+import gzip
 import json
 import logging
 from pathlib import Path
@@ -17,12 +18,12 @@ logging.getLogger("great_expectations").setLevel(logging.ERROR)
 logging.getLogger("great_expectations.data_context").setLevel(logging.ERROR)
 logging.getLogger("great_expectations.data_context.types.base").setLevel(logging.ERROR)
 
-NUMERIC_COLS = [
+DEFAULT_NUMERIC_COLS = [
   "completion_hours_business",
   "seniority_enum",
   "historical_avg_completion_hours",
 ]
-CATEGORICAL_COLS = ["repo", "issue_type", "state"]
+DEFAULT_CATEGORICAL_COLS = ["repo", "issue_type", "state"]
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -42,28 +43,39 @@ class NumpyEncoder(json.JSONEncoder):
 
 
 def load_jsonl(path: Path) -> pd.DataFrame:
-  """Load a JSONL file into a DataFrame."""
+  """Load a JSONL or JSONL.GZ file into a DataFrame."""
   tickets = []
-  with open(path, encoding="utf-8") as f:
+  open_fn = gzip.open if path.suffix == ".gz" else open
+  with open_fn(path, "rt", encoding="utf-8") as f:
     for line in f:
       if line.strip():
         tickets.append(json.loads(line))
   return pd.DataFrame(tickets)
 
 
-def detect_skew(sample_df: pd.DataFrame, full_df: pd.DataFrame) -> dict:
+def detect_skew(
+  sample_df: pd.DataFrame,
+  full_df: pd.DataFrame,
+  *,
+  numeric_cols: list[str] | None = None,
+  categorical_cols: list[str] | None = None,
+) -> dict:
   """Compare distributions between sample and full dataset.
 
   Args:
       sample_df: Sampled dataset
       full_df: Full dataset
+      numeric_cols: Numeric columns to compare
+      categorical_cols: Categorical columns to compare
 
   Returns:
       Dictionary of skew results per column
   """
   skew_results = {}
+  numeric_columns = numeric_cols or DEFAULT_NUMERIC_COLS
+  categorical_columns = categorical_cols or DEFAULT_CATEGORICAL_COLS
 
-  for col in NUMERIC_COLS:
+  for col in numeric_columns:
     if col not in sample_df.columns or col not in full_df.columns:
       continue
 
@@ -85,7 +97,7 @@ def detect_skew(sample_df: pd.DataFrame, full_df: pd.DataFrame) -> dict:
       "skewed": mean_diff_pct > 10,
     }
 
-  for col in CATEGORICAL_COLS:
+  for col in categorical_columns:
     if col not in sample_df.columns or col not in full_df.columns:
       continue
 
@@ -112,6 +124,8 @@ def run_data_profiling(
   data_path: str | Path,
   reference_path: str | Path | None = None,
   output_dir: str | Path | None = None,
+  numeric_columns: list[str] | None = None,
+  categorical_columns: list[str] | None = None,
 ) -> dict[str, Any]:
   """Run data profiling on transformed tickets.
 
@@ -119,12 +133,16 @@ def run_data_profiling(
       data_path: Path to transformed tickets JSONL file.
       reference_path: Optional path to full dataset for skew detection.
       output_dir: Optional directory to save profile outputs.
+      numeric_columns: Numeric columns to compare for drift/skew.
+      categorical_columns: Categorical columns to compare for drift/skew.
 
   Returns:
       Dictionary with profiling results including GE validation and skew.
   """
   data_path = Path(data_path)
   output_dir = Path(output_dir) if output_dir else data_path.parent
+  numeric_cols = numeric_columns or DEFAULT_NUMERIC_COLS
+  categorical_cols = categorical_columns or DEFAULT_CATEGORICAL_COLS
 
   print("Loading dataset...")
   df = load_jsonl(data_path)
@@ -162,7 +180,12 @@ def run_data_profiling(
   skew_results = {}
   if full_df is not None:
     print("\nDetecting skew between datasets...")
-    skew_results = detect_skew(df, full_df)
+    skew_results = detect_skew(
+      df,
+      full_df,
+      numeric_cols=numeric_cols,
+      categorical_cols=categorical_cols,
+    )
     skewed_cols = [col for col, res in skew_results.items() if res["skewed"]]
     if skewed_cols:
       print("Skewed columns:", skewed_cols)
@@ -179,6 +202,10 @@ def run_data_profiling(
     "categorical_stats": stats["categorical_stats"],
     "ge_validation": validation_results,
     "skew_vs_reference": skew_results,
+    "profile_columns": {
+      "numeric": numeric_cols,
+      "categorical": categorical_cols,
+    },
   }
 
   profile_output = output_dir / "data_profile_report.json"

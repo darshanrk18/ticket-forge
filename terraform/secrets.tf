@@ -8,6 +8,11 @@ resource "random_password" "airflow_webserver_secret_key" {
   special = false
 }
 
+resource "random_password" "web_backend_jwt_secret_key" {
+  length  = 64
+  special = false
+}
+
 resource "google_secret_manager_secret" "airflow_admin_password" {
   secret_id = "airflow-admin-password-${var.environment}"
 
@@ -66,6 +71,21 @@ resource "google_secret_manager_secret" "ticketforge_db_password" {
 resource "google_secret_manager_secret_version" "ticketforge_db_password" {
   secret      = google_secret_manager_secret.ticketforge_db_password.id
   secret_data = coalesce(var.ticketforge_db_password, random_password.ticketforge_db_password.result)
+}
+
+resource "google_secret_manager_secret" "web_backend_jwt_secret_key" {
+  secret_id = var.web_backend_jwt_secret_id
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.airflow_services]
+}
+
+resource "google_secret_manager_secret_version" "web_backend_jwt_secret_key" {
+  secret      = google_secret_manager_secret.web_backend_jwt_secret_key.id
+  secret_data = coalesce(var.web_backend_jwt_secret_key, random_password.web_backend_jwt_secret_key.result)
 }
 
 locals {

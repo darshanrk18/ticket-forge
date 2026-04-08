@@ -15,8 +15,20 @@ on:
         default: "true"
         type: choice
         options: ["true", "false"]
+      dataset_source:
+        description: "Dataset source for retraining"
+        required: false
+        default: "dvc"
+        type: choice
+        options: ["dvc", "gcs"]
+      trigger_reason:
+        description: "Reason this retraining run was started"
+        required: false
+        default: "manual-dispatch"
+        type: string
 
 permissions:
+  actions: write
   contents: read
   id-token: write
 
@@ -36,6 +48,10 @@ jobs:
       run_id: ${{ steps.run-meta.outputs.run_id }}
       gate_report: ${{ steps.run-meta.outputs.gate_report }}
       executed: 'true'
+      dataset_source: ${{ steps.workflow-inputs.outputs.dataset_source }}
+      trigger_reason: ${{ steps.workflow-inputs.outputs.trigger_reason }}
+      promoted_model_version: ${{ steps.promotion-meta.outputs.promoted_model_version }}
+      gate_decision: ${{ steps.promotion-meta.outputs.gate_decision }}
 
     steps:
       - name: Checkout
@@ -49,6 +65,31 @@ jobs:
           RUN_ID="${{ github.run_id }}-${{ github.run_attempt }}"
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "gate_report=models/$RUN_ID/gate_report.json" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve workflow inputs
+        id: workflow-inputs
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            dataset_source="${{ github.event.inputs.dataset_source }}"
+            trigger_reason="${{ github.event.inputs.trigger_reason }}"
+          elif [[ "${{ github.event_name }}" == "schedule" ]]; then
+            dataset_source="gcs"
+            trigger_reason="scheduled-health-check"
+          else
+            dataset_source="dvc"
+            trigger_reason="ci-success"
+          fi
+
+          if [[ -z "${dataset_source}" ]]; then
+            dataset_source="dvc"
+          fi
+
+          if [[ -z "${trigger_reason}" ]]; then
+            trigger_reason="${{ github.event_name }}"
+          fi
+
+          echo "dataset_source=${dataset_source}" >> "$GITHUB_OUTPUT"
+          echo "trigger_reason=${trigger_reason}" >> "$GITHUB_OUTPUT"
 
       - name: Install just
         uses: taiki-e/install-action@just
@@ -73,6 +114,7 @@ jobs:
           service_account: 'ml-pipeline-sa@${{ secrets.TF_VAR_PROJECT_ID }}.iam.gserviceaccount.com'
 
       - name: Pull DVC-tracked training dataset
+        if: steps.workflow-inputs.outputs.dataset_source == 'dvc'
         run: |
           dvc pull data.dvc
         env:
@@ -85,7 +127,7 @@ jobs:
             --runid "${{ steps.run-meta.outputs.run_id }}" \
             --trigger "${{ github.event_name }}" \
             --commit-sha "${{ github.sha }}" \
-            --source-uri "dvc" \
+            --source-uri "${{ steps.workflow-inputs.outputs.dataset_source }}" \
             --promote "$PROMOTE"
         env:
           # Enable automatic Cloud Run discovery (no secrets needed!)
@@ -105,6 +147,78 @@ jobs:
           MODEL_CICD_MAX_REGRESSION_DEGRADATION: "0.10"      # % degradation vs production
 
           MLFLOW_MAX_TUNING_RUNS: "5"                        # Hyperparameter tuning iterations (default: 50)
+          GCS_BUCKET_NAME: gs://ticket-forge-training-artifacts-${{ secrets.TF_VAR_PROJECT_ID }}-prod
+
+      - name: Resolve promotion metadata
+        id: promotion-meta
+        if: always()
+        env:
+          RUN_ID: ${{ steps.run-meta.outputs.run_id }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          gate_path = Path(f"models/{os.environ['RUN_ID']}/gate_report.json")
+          promoted_model_version = ""
+          gate_decision = ""
+
+          if gate_path.exists():
+            gate = json.loads(gate_path.read_text(encoding="utf-8"))
+            decision = gate.get("promotion_decision", {}) if isinstance(gate, dict) else {}
+            promoted_model_version = str(decision.get("promoted_model_version") or "")
+            gate_decision = str(decision.get("decision") or "")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write(f"promoted_model_version={promoted_model_version}\n")
+            output.write(f"gate_decision={gate_decision}\n")
+          PY
+
+      - name: Write gate summary
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          gate_path = Path("models/${{ steps.run-meta.outputs.run_id }}/gate_report.json")
+          manifest_path = Path("models/${{ steps.run-meta.outputs.run_id }}/run_manifest.json")
+
+          lines = [
+            "## Model CI/CD Summary",
+            "",
+            f"- Dataset source: ${{ steps.workflow-inputs.outputs.dataset_source }}",
+            f"- Trigger reason: ${{ steps.workflow-inputs.outputs.trigger_reason }}",
+            f"- Run id: ${{ steps.run-meta.outputs.run_id }}",
+          ]
+
+          if gate_path.exists():
+            gate = json.loads(gate_path.read_text(encoding="utf-8"))
+            decision = gate.get("promotion_decision", {})
+            lines.extend(
+              [
+                f"- Decision: {decision.get('decision', 'unknown')}",
+                f"- Promoted model version: {decision.get('promoted_model_version') or 'n/a'}",
+                f"- Failure reasons: {decision.get('reasons', []) or []}",
+              ]
+            )
+
+          if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            training_dataset = manifest.get("training_dataset")
+            if isinstance(training_dataset, dict):
+              lines.extend(
+                [
+                  f"- Dataset version: {training_dataset.get('dataset_version', 'n/a')}",
+                  f"- Dataset URI: {training_dataset.get('dataset_path', 'n/a')}",
+                ]
+              )
+
+          summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          EOF
 
       - name: Upload model artifacts
         if: always()
@@ -122,6 +236,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install notification dependencies
+        run: uv sync --all-packages
+
       - name: Download model artifacts
         if: needs.train-and-promote.outputs.executed == 'true'
         uses: actions/download-artifact@v4
@@ -129,85 +254,161 @@ jobs:
           name: model-artifacts-${{ github.run_id }}
           path: .
 
-      - name: Send email notification
-        # Mirrors the body structure used by dags/email_callbacks.py:
-        # same GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD secrets, same
-        # SMTP_SSL approach, and same section headings (Status, Trigger,
-        # Run URL) so alerts are consistent across Airflow DAGs and CI/CD.
+      - name: Build retraining operations report
         run: |
           python3 - <<'EOF'
-          import os
-          import smtplib
-          from email.mime.text import MIMEText
+          import json
+          import sys
+          from pathlib import Path
 
-          status  = "${{ needs.train-and-promote.result }}"
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import (
+            build_ops_report,
+            write_ops_report,
+          )
+
+          status = "${{ needs.train-and-promote.result }}"
           trigger = "${{ github.event_name }}"
+          trigger_reason = "${{ needs.train-and-promote.outputs.trigger_reason }}"
+          dataset_source = "${{ needs.train-and-promote.outputs.dataset_source }}"
           run_url = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          executed = "${{ needs.train-and-promote.outputs.executed }}"
           run_id = "${{ needs.train-and-promote.outputs.run_id }}"
-          is_success = status == "success"
+          gate_report_path = Path(f"models/{run_id}/gate_report.json") if run_id else None
+          manifest_path = Path(f"models/{run_id}/run_manifest.json") if run_id else None
+          gate = {}
+          manifest = {}
+          if gate_report_path and gate_report_path.exists():
+            gate = json.loads(gate_report_path.read_text(encoding="utf-8"))
+          if manifest_path and manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-          gate_context = ""
-          gate_report_path = f"models/{run_id}/gate_report.json" if run_id else ""
-          if run_id and os.path.exists(gate_report_path):
-            try:
-              import json
-              with open(gate_report_path, encoding="utf-8") as f:
-                gate = json.load(f)
-              gate_context = (
-                f"Gate decision: {gate.get('promotion_decision', {}).get('decision', 'unknown')}\n"
-                f"Validation passed: {gate.get('validation_gate', {}).get('passed', False)}\n"
-                f"Bias passed: {gate.get('bias_gate', {}).get('passed', False)}\n"
-                f"Regression passed: {gate.get('regression_guardrail', {}).get('passed', False)}\n"
-                f"Reasons: {gate.get('promotion_decision', {}).get('reasons', [])}\n"
-              )
-            except Exception:
-              gate_context = "Gate decision: unreadable gate report\n"
-
-          if is_success:
-            subject = "[TicketForge] Model CI/CD Success: train-and-promote"
+          decision = gate.get("promotion_decision", {}) if isinstance(gate, dict) else {}
+          reasons = decision.get("reasons", []) if isinstance(decision, dict) else []
+          training_dataset = (
+            manifest.get("training_dataset", {}) if isinstance(manifest, dict) else {}
+          )
+          report_type = "retraining" if trigger_reason.startswith("drift") else "training"
+          ops_report = build_ops_report(
+            report_type=report_type,
+            workflow_name="Model CI/CD",
+            status=status,
+            trigger=trigger,
+            trigger_reason=trigger_reason,
+            workflow_url=run_url,
+            commit_sha="${{ github.sha }}",
+            dataset_source=dataset_source,
+            dataset_version=training_dataset.get("dataset_version")
+            if isinstance(training_dataset, dict)
+            else None,
+            dataset_uri=training_dataset.get("dataset_path")
+            if isinstance(training_dataset, dict)
+            else None,
+            model_version=decision.get("promoted_model_version")
+            if isinstance(decision, dict)
+            else None,
+            failure_reasons=[str(reason) for reason in reasons]
+            if isinstance(reasons, list)
+            else [],
+            metadata={
+              "run_id": run_id,
+              "gate_decision": decision.get("decision", "unknown")
+              if isinstance(decision, dict)
+              else "unknown",
+            },
+          )
+          if run_id:
+            write_ops_report(
+              Path(f"models/{run_id}/operations_report.json"),
+              ops_report,
+            )
+            print(f"Operations report written for run {run_id}")
           else:
-            subject = "[TicketForge] Model CI/CD Failure: train-and-promote"
+            print("No run_id available; skipping operations report write")
+          EOF
 
-          body_lines = [
-            "Job:     train-and-promote",
-            f"Status:  {status.upper()}",
-            f"Trigger: {trigger}",
-            f"Run:     {run_url}",
-            f"Executed: {executed}",
-            "",
-          ]
+      - name: Send email notification
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+          import sys
+          from pathlib import Path
 
-          if gate_context:
-            body_lines += ["Gate Summary:", gate_context, ""]
+          sys.path.insert(0, "apps/training")
+          sys.path.insert(0, "libs/shared")
 
-          if not is_success:
-            body_lines += [
-              "Error:",
-              f"  Job finished with status '{status}'. Check the run URL above for details.",
-              "",
-            ]
+          from training.analysis.gate_report import NotificationEvent, append_notification_event
+          from training.analysis.ops_report import send_gmail_notification
 
-          body = "\n".join(body_lines)
-
-          sender   = os.environ.get("GMAIL_APP_USERNAME")
-          password = os.environ.get("GMAIL_APP_PASSWORD")
-          if not sender or not password:
-            print("GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD not set — skipping notification")
+          run_id = "${{ needs.train-and-promote.outputs.run_id }}"
+          report_path = Path(f"models/{run_id}/operations_report.json") if run_id else None
+          gate_report_path = Path(f"models/{run_id}/gate_report.json") if run_id else None
+          if not report_path or not report_path.exists():
+            print("operations_report.json missing; skipping notification")
             raise SystemExit(0)
 
-          msg = MIMEText(f"<pre>{body}</pre>", "html")
-          msg["Subject"] = subject
-          msg["From"]    = sender
-          msg["To"]      = sender
+          ops_report = json.loads(report_path.read_text(encoding="utf-8"))
+          report_type = str(ops_report.get("report_type") or "training")
 
-          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(sender, password)
-            smtp.sendmail(sender, [sender], msg.as_string())
-
-          print(f"Notification sent to {sender}")
+          sender = os.environ.get("GMAIL_APP_USERNAME")
+          password = os.environ.get("GMAIL_APP_PASSWORD")
+          if sender and password:
+            send_gmail_notification(
+              ops_report,
+              sender_email=sender,
+              sender_password=password,
+            )
+            if gate_report_path and gate_report_path.exists():
+              append_notification_event(
+                gate_report_path,
+                NotificationEvent(
+                  event_type=report_type,
+                  channel="email",
+                  recipient=sender,
+                  delivery_status="sent",
+                ),
+              )
+            print(f"Notification sent to {sender}")
+          else:
+            print("GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD not set — skipping notification")
           EOF
         env:
           GMAIL_APP_USERNAME: ${{ secrets.GMAIL_APP_USERNAME }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         continue-on-error: true
+
+      - name: Upload retraining operations artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-ops-artifacts-${{ github.run_id }}
+          path: |
+            models/${{ needs.train-and-promote.outputs.run_id }}/operations_report.json
+            models/${{ needs.train-and-promote.outputs.run_id }}/gate_report.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  dispatch-serving-deploy:
+    name: Train / Dispatch Serving Redeploy
+    needs: [train-and-promote]
+    if: >-
+      needs.train-and-promote.result == 'success' &&
+      needs.train-and-promote.outputs.promoted_model_version != '' &&
+      github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger backend redeploy for promoted model
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODEL_VERSION: ${{ needs.train-and-promote.outputs.promoted_model_version }}
+        run: |
+          gh workflow run serving-deploy.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f "deploy_backend=true" \
+            -f "deploy_frontend=false" \
+            -f "serving_model_version=${MODEL_VERSION}" \
+            -f "trigger_workflow=Model CI/CD" \
+            -f "trigger_run_id=${{ github.run_id }}" \
+            -f "trigger_run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

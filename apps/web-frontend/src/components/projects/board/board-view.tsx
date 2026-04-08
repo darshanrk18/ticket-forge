@@ -300,7 +300,6 @@ export function BoardView({
             <BoardColumn
               key={column.id}
               column={column}
-              index={idx}
               isLast={idx === columns.length - 1}
               onCreateTicket={handleCreateTicket}
               onTicketClick={handleTicketClick}

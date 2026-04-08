@@ -141,6 +141,11 @@ def _find_downloaded_dataset_file(local_dir: Path) -> Path | None:
   return None
 
 
+def find_downloaded_dataset_file(local_dir: Path) -> Path | None:
+  """Public wrapper for locating a downloaded transformed dataset artifact."""
+  return _find_downloaded_dataset_file(local_dir)
+
+
 def resolve_cloud_dataset(bucket_uri: str | None = None) -> CloudDatasetReference:
   """Resolve and download a cloud dataset defined by index.json.
 

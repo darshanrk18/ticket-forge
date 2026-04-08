@@ -15,7 +15,7 @@ jobs:
   # ---------------------------------------
 
   checks:
-    name: Check / Linting/Testing
+    name: Check / Repository Sanity
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -38,8 +38,76 @@ jobs:
       - name: Install dependencies
         run: just install-deps
 
-      - name: Run checks
-        run: just check
+      - name: Run shared and pipeline checks
+        run: |
+          just pylint libs apps/pipelines
+          just pytest apps/pipelines/tests
+
+  model-eval:
+    name: Check / Model Pipeline Eval
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: just install-deps
+
+      - name: Run training checks
+        run: |
+          just pylint apps/training
+          just pytest apps/training/tests
+
+  backend-eval:
+    name: Check / Backend API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: just install-deps
+
+      - name: Run backend tests
+        run: just pytest apps/web-backend/tests
+
+  frontend-eval:
+    name: Check / Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run frontend lint
+        run: npm --workspace apps/web-frontend run lint
+
+      - name: Run frontend build
+        run: npm --workspace apps/web-frontend run build
 
   analyze:
     name: Check / CodeQL (${{ matrix.language }})
@@ -144,12 +212,16 @@ jobs:
 
   all-checks-good:
     name: Check / Finished
-    needs: [checks, analyze, terraform-validate-plan]
+    needs:
+      [checks, model-eval, backend-eval, frontend-eval, analyze, terraform-validate-plan]
     # This ensures it runs even if 'analyze' was skipped,
     # but still fails if any of them actually failed.
     if: |
       always() &&
       needs.checks.result == 'success' &&
+      needs.model-eval.result == 'success' &&
+      needs.backend-eval.result == 'success' &&
+      needs.frontend-eval.result == 'success' &&
       (needs.analyze.result == 'success' || needs.analyze.result == 'skipped') &&
       needs.terraform-validate-plan.result == 'success'
     runs-on: ubuntu-latest

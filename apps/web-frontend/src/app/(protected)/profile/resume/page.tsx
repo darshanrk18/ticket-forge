@@ -21,7 +21,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
 const ACCEPTED_TYPES = [
@@ -49,7 +48,7 @@ export default function ResumeUploadPage() {
     return null;
   }
 
-  function handleFile(f: File) {
+  const handleFile = useCallback((f: File) => {
     const error = validateFile(f);
     if (error) {
       toast.error(error);
@@ -57,7 +56,7 @@ export default function ResumeUploadPage() {
     }
     setFile(f);
     setIsUploaded(false);
-  }
+  }, []);
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -81,7 +80,7 @@ export default function ResumeUploadPage() {
     setIsDragging(false);
     const f = e.dataTransfer.files?.[0];
     if (f) handleFile(f);
-  }, []);
+  }, [handleFile]);
 
   function removeFile() {
     setFile(null);

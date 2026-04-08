@@ -60,12 +60,23 @@ class KeywordExtractor:
 
   def _extract_capitalized_terms(self, text: str) -> list[str]:
     """Extract capitalized terms that might be tech keywords."""
-    pattern = r"\b[A-Z][A-Za-z0-9]*(?:[A-Z][a-z0-9]*)*\b"
-    capitalized = re.findall(pattern, text)
-
     validated = []
-    for term in capitalized:
-      term_lower = term.lower()
+    current = []
+    for char in text:
+      if char.isalnum():
+        current.append(char)
+        continue
+
+      token = "".join(current)
+      if token[:1].isupper():
+        term_lower = token.lower()
+        if term_lower in self.normalized_skills:
+          validated.append(self.normalized_skills[term_lower])
+      current = []
+
+    token = "".join(current)
+    if token[:1].isupper():
+      term_lower = token.lower()
       if term_lower in self.normalized_skills:
         validated.append(self.normalized_skills[term_lower])
 

@@ -118,6 +118,86 @@ variable "mlflow_additional_invokers" {
   default     = []
 }
 
+variable "web_backend_service_name" {
+  description = "Cloud Run service name for the production backend inference API."
+  type        = string
+  default     = "ticketforge-backend"
+}
+
+variable "web_frontend_service_name" {
+  description = "Cloud Run service name for the production web frontend."
+  type        = string
+  default     = "ticketforge-frontend"
+}
+
+variable "web_backend_artifact_registry_repository" {
+  description = "Artifact Registry repository for backend images."
+  type        = string
+  default     = "backend-repo"
+}
+
+variable "web_frontend_artifact_registry_repository" {
+  description = "Artifact Registry repository for frontend images."
+  type        = string
+  default     = "frontend-repo"
+}
+
+variable "web_backend_image" {
+  description = "Container image used by the backend Cloud Run service."
+  type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
+variable "web_frontend_image" {
+  description = "Container image used by the frontend Cloud Run service."
+  type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
+variable "web_backend_cors_origins" {
+  description = "Allowed browser origins for backend CORS and refresh cookie usage."
+  type        = list(string)
+  default     = ["http://localhost:3000"]
+}
+
+variable "web_frontend_api_url" {
+  description = "Public backend API URL embedded into the frontend runtime."
+  type        = string
+  default     = ""
+}
+
+variable "web_backend_mlflow_model_name" {
+  description = "Registered MLflow model served by the backend."
+  type        = string
+  default     = "ticket-forge-best"
+}
+
+variable "web_backend_mlflow_model_stage" {
+  description = "MLflow stage used when no explicit serving version is pinned."
+  type        = string
+  default     = "Production"
+}
+
+variable "web_backend_serving_model_version" {
+  description = "Optional explicit MLflow model version pinned into the deployed backend."
+  type        = string
+  default     = ""
+}
+
+variable "web_backend_jwt_secret_id" {
+  description = "Secret Manager secret id for the backend JWT signing key."
+  type        = string
+  default     = "ticketforge-jwt-secret-prod"
+}
+
+variable "web_backend_jwt_secret_key" {
+  description = "Optional explicit backend JWT secret. If null, Terraform generates one."
+  type        = string
+  default     = null
+  sensitive   = true
+  nullable    = true
+}
+
 variable "environment" {
   description = "Deployment environment for naming and labeling."
   type        = string

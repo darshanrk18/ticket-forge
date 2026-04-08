@@ -42,7 +42,7 @@ def _normalize_async_database_url(database_url: str) -> str:
 
 
 engine = create_async_engine(
-    _normalize_async_database_url(get_settings().database_url),
+    _normalize_async_database_url(get_settings().resolved_database_url),
     echo=get_settings().debug,
     pool_pre_ping=True,
 )

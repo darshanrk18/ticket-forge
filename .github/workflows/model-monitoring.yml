@@ -1,0 +1,260 @@
+name: Model Monitoring
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      trigger_reason:
+        description: "Why this monitoring run is being started"
+        required: false
+        default: "manual-monitoring"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  actions: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.run-meta.outputs.run_id }}
+      drift_detected: ${{ steps.parse-report.outputs.drift_detected }}
+      dataset_version: ${{ steps.parse-report.outputs.dataset_version }}
+      dataset_uri: ${{ steps.parse-report.outputs.dataset_uri }}
+      drift_report_uri: ${{ steps.parse-report.outputs.drift_report_uri }}
+      trigger_reason: ${{ steps.monitor-inputs.outputs.trigger_reason }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: just install-deps
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: 'ml-pipeline-sa@${{ secrets.TF_VAR_PROJECT_ID }}.iam.gserviceaccount.com'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.TF_VAR_PROJECT_ID }}
+
+      - name: Set monitoring metadata
+        id: run-meta
+        run: |
+          RUN_ID="monitor-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve monitoring inputs
+        id: monitor-inputs
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            trigger_reason="${{ github.event.inputs.trigger_reason }}"
+          else
+            trigger_reason="scheduled-monitoring"
+          fi
+
+          if [[ -z "${trigger_reason}" ]]; then
+            trigger_reason="${{ github.event_name }}"
+          fi
+
+          echo "trigger_reason=${trigger_reason}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve backend URL
+        id: backend-url
+        run: |
+          backend_url="$(gcloud run services describe ticketforge-backend \
+            --project="${{ secrets.TF_VAR_PROJECT_ID }}" \
+            --region="${{ secrets.TF_VAR_REGION }}" \
+            --format='value(status.url)')"
+          echo "value=${backend_url}" >> "$GITHUB_OUTPUT"
+
+      - name: Run drift monitoring
+        env:
+          GCS_BUCKET_NAME: gs://ticket-forge-training-artifacts-${{ secrets.TF_VAR_PROJECT_ID }}-prod
+          TICKETFORGE_GCP_PROJECT_ID: ${{ secrets.TF_VAR_PROJECT_ID }}
+          TICKETFORGE_GCP_REGION: ${{ secrets.TF_VAR_REGION }}
+        run: |
+          uv run python -m training.cmd.monitor_model \
+            --runid "${{ steps.run-meta.outputs.run_id }}" \
+            --monitor-source serving \
+            --backend-url "${{ steps.backend-url.outputs.value }}" \
+            --trigger "${{ github.event_name }}" \
+            --trigger-reason "${{ steps.monitor-inputs.outputs.trigger_reason }}"
+
+      - name: Parse drift report
+        id: parse-report
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path("models/${{ steps.run-meta.outputs.run_id }}/drift_report.json")
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+            f.write(f"drift_detected={'true' if report.get('drift_detected') else 'false'}\n")
+            f.write(f"dataset_version={report.get('dataset_version', '')}\n")
+            f.write(f"dataset_uri={report.get('dataset_uri', '')}\n")
+            f.write(f"drift_report_uri={report.get('drift_report_uri', '')}\n")
+          EOF
+
+      - name: Write monitoring summary
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(
+            Path("models/${{ steps.run-meta.outputs.run_id }}/drift_report.json").read_text(
+              encoding="utf-8"
+            )
+          )
+          lines = [
+            "## Model Monitoring Summary",
+            "",
+            f"- Monitor source: {report.get('monitor_source')}",
+            f"- Drift detected: {report.get('drift_detected')}",
+            f"- Dataset version: {report.get('dataset_version')}",
+            f"- Dataset URI: {report.get('dataset_uri')}",
+            f"- Drift report URI: {report.get('drift_report_uri')}",
+            f"- Trigger reason: {report.get('trigger_reason')}",
+            f"- Breaches: {report.get('breaches', [])}",
+          ]
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(
+            "\n".join(lines) + "\n",
+            encoding="utf-8",
+          )
+          EOF
+
+      - name: Trigger retraining workflow
+        id: trigger-retrain
+        if: steps.parse-report.outputs.drift_detected == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run model-cicd.yml \
+            --ref main \
+            -f promote=true \
+            -f dataset_source=gcs \
+            -f trigger_reason="drift-threshold-breach:${{ steps.run-meta.outputs.run_id }}"
+
+      - name: Build monitoring operations report
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import (
+            build_ops_report,
+            write_ops_report,
+          )
+
+          drift_path = Path("models/${{ steps.run-meta.outputs.run_id }}/drift_report.json")
+          drift_report = {}
+          if drift_path.exists():
+            drift_report = json.loads(drift_path.read_text(encoding="utf-8"))
+
+          breaches = drift_report.get("breaches", []) if isinstance(drift_report, dict) else []
+          if not isinstance(breaches, list):
+            breaches = []
+          failure_reasons = [str(reason) for reason in breaches]
+          if not drift_report and "${{ job.status }}" != "success":
+            failure_reasons.append("drift-report-missing")
+
+          ops_report = build_ops_report(
+            report_type="monitoring",
+            workflow_name="Model Monitoring",
+            status="${{ job.status }}",
+            trigger="${{ github.event_name }}",
+            trigger_reason="${{ steps.monitor-inputs.outputs.trigger_reason }}",
+            workflow_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            dataset_source="serving-events",
+            dataset_version=str(drift_report.get("dataset_version") or ""),
+            dataset_uri=str(drift_report.get("dataset_uri") or ""),
+            failure_reasons=failure_reasons,
+            metadata={
+              "backend_url": "${{ steps.backend-url.outputs.value }}",
+              "drift_detected": drift_report.get("drift_detected"),
+              "drift_report_uri": drift_report.get("drift_report_uri"),
+              "monitor_source": drift_report.get("monitor_source"),
+              "retrain_recommended": drift_report.get("retrain_recommended"),
+              "retraining_trigger_outcome": "${{ steps.trigger-retrain.outcome }}",
+            },
+          )
+          ops_path = Path("models/${{ steps.run-meta.outputs.run_id }}/operations_report.json")
+          write_ops_report(ops_path, ops_report)
+          print(f"Operations report written to {ops_path}")
+
+          if drift_path.exists():
+            print(f"Drift report present at {drift_path}")
+          else:
+            print("Drift report missing; operations report captures workflow status only")
+          EOF
+
+      - name: Upload monitoring artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-monitoring-${{ github.run_id }}
+          path: models/${{ steps.run-meta.outputs.run_id }}/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Send monitoring notification
+        if: always()
+        env:
+          GMAIL_APP_USERNAME: ${{ secrets.GMAIL_APP_USERNAME }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import send_gmail_notification
+
+          ops_path = Path("models/${{ steps.run-meta.outputs.run_id }}/operations_report.json")
+          if not ops_path.exists():
+            print("operations_report.json missing; skipping notification")
+            raise SystemExit(0)
+
+          ops_report = json.loads(ops_path.read_text(encoding="utf-8"))
+
+          sender = os.environ.get("GMAIL_APP_USERNAME")
+          password = os.environ.get("GMAIL_APP_PASSWORD")
+          if not sender or not password:
+            print("GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD not set — skipping notification")
+            raise SystemExit(0)
+
+          send_gmail_notification(
+            ops_report,
+            sender_email=sender,
+            sender_password=password,
+          )
+          print(f"Notification sent to {sender}")
+          EOF
+        continue-on-error: true

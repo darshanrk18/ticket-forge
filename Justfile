@@ -129,6 +129,31 @@ airflow-up:
 gcp-airflow-smoketest url:
     bash scripts/ci/airflow_smoketest.sh {{ url }}
 
+# runs backend smoketest script against provided URL
+[group('ops')]
+gcp-backend-smoketest url expected_model_version='':
+    bash scripts/ci/backend_smoketest.sh {{ url }} {{ expected_model_version }}
+
+# runs frontend smoketest script against provided URL
+[group('ops')]
+gcp-frontend-smoketest url:
+    bash scripts/ci/frontend_smoketest.sh {{ url }}
+
+# dispatches the Serving Deploy workflow and optionally watches it to completion
+[group('ops')]
+gcp-serving-deploy deploy_backend='true' deploy_frontend='true' serving_model_version='' ref='main' watch='true':
+    DEPLOY_BACKEND={{ deploy_backend }} \
+    DEPLOY_FRONTEND={{ deploy_frontend }} \
+    SERVING_MODEL_VERSION="{{ serving_model_version }}" \
+    DEPLOY_REF="{{ ref }}" \
+    WATCH_SERVING_DEPLOY={{ watch }} \
+    bash scripts/ci/deploy_serving.sh
+
+# validates required workflows, scripts, and reports before submission
+[group('ops')]
+verify-submission-ready:
+    bash scripts/ci/verify_submission_ready.sh
+
 # applies ticketforge Postgres schema init scripts through Cloud SQL Auth Proxy
 [group('ops')]
 gcp-ticketforge-schema-init:

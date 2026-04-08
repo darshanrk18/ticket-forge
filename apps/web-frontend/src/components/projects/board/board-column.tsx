@@ -14,7 +14,6 @@ export interface ColumnData {
 
 interface BoardColumnProps {
   column: ColumnData;
-  index: number;
   isLast: boolean;
   onCreateTicket: (columnId: string, title: string) => void;
   onTicketClick: (ticketId: string) => void;
@@ -22,7 +21,6 @@ interface BoardColumnProps {
 
 export function BoardColumn({
   column,
-  index,
   isLast,
   onCreateTicket,
   onTicketClick,

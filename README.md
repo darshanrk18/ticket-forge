@@ -100,12 +100,33 @@ GCP Airflow operations:
 - `just gcp-airflow-deploy` - deploy/update Airflow VM and runtime secrets from current commit.
 - `just gcp-ticketforge-schema-init` - apply ticketforge Postgres init SQL to Cloud SQL through local proxy.
 - `just gcp-airflow-smoketest <url>` - run health + API smoke checks.
+- `just gcp-backend-smoketest <url> [model_version]` - verify deployed backend health, inference schema, and pinned model version.
+- `just gcp-frontend-smoketest <url>` - verify deployed frontend landing page content.
+- `just gcp-serving-deploy` - dispatch the backend/frontend Cloud Run deploy workflow and watch it complete.
 - `just gcp-airflow-trigger <url> <dag_id> [conf_json] [run_id]` - trigger a DAG run through the Airflow REST API.
 - `just gcp-proxy airflow [local_port]` - open IAP tunnel to Airflow webserver.
 - `just gcp-proxy cloud-sql [local_port]` - open Cloud SQL proxy to shared Postgres.
 - `just gcp-get-conn-info` - print service URLs and credentials from Secret Manager.
+- `just verify-submission-ready` - validate that required workflows, scripts, and reports are present before submission.
 
 Use `just --list` to view the full command set.
+
+## Operations Workflows
+
+The repo uses three operational GitHub Actions workflows beyond the base `CI/CD`
+gate:
+
+- `Airflow Deploy` - deploys the Airflow runtime and writes a deployment report.
+- `Serving Deploy` - deploys the backend/frontend Cloud Run services, smoke tests
+  them, and records deployment reports plus notifications.
+- `Model Monitoring` - profiles recent serving-time inference events for drift and
+  can trigger retraining automatically.
+- `Model CI/CD` - retrains, gates, promotes, and records release artifacts for
+  the model lifecycle, after which `Serving Deploy` repins the backend to the
+  promoted model version automatically.
+
+See [reports/02_DEPLOYMENT_AND_SUBMISSION.md](./reports/02_DEPLOYMENT_AND_SUBMISSION.md)
+for the submission mapping and verification checklist.
 
 ## Airflow Deployment (GCP)
 
@@ -140,6 +161,29 @@ just gcp-airflow-trigger "http://10.20.0.5:8080" ticket_etl '{"source":"manual"}
 just gcp-proxy airflow 18080
 # then open http://127.0.0.1:18080
 ```
+
+## Serving Deployment (GCP)
+
+Backend and frontend are deployed to Cloud Run and managed through Terraform
+plus the `Serving Deploy` workflow.
+
+1. Ensure `gh auth status` succeeds and the repo secrets / WIF setup are present.
+2. Merge backend/frontend/inference changes to `main`.
+3. Dispatch the one-command rollout:
+
+```sh
+just gcp-serving-deploy
+```
+
+4. Verify:
+
+```sh
+just gcp-backend-smoketest "https://<backend-url>" "<model-version>"
+just gcp-frontend-smoketest "https://<frontend-url>"
+```
+
+The backend deployment pins `SERVING_MODEL_VERSION` so every serving revision is
+traceable back to the exact promoted MLflow model version.
 
 ## Development
 

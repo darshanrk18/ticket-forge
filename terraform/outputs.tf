@@ -13,6 +13,46 @@ output "mlflow_service_account_email" {
   value       = google_service_account.mlflow_server.email
 }
 
+output "web_backend_service_name" {
+  description = "Cloud Run service name for the production backend."
+  value       = google_cloud_run_v2_service.web_backend.name
+}
+
+output "web_backend_service_url" {
+  description = "Public URL for the production backend API."
+  value       = google_cloud_run_v2_service.web_backend.uri
+}
+
+output "web_backend_service_account_email" {
+  description = "Service account used by the production backend."
+  value       = google_service_account.web_backend_runtime.email
+}
+
+output "web_backend_artifact_registry_repository" {
+  description = "Artifact Registry repository for backend images."
+  value       = google_artifact_registry_repository.web_backend.repository_id
+}
+
+output "web_frontend_service_name" {
+  description = "Cloud Run service name for the production frontend."
+  value       = google_cloud_run_v2_service.web_frontend.name
+}
+
+output "web_frontend_service_url" {
+  description = "Public URL for the production frontend."
+  value       = google_cloud_run_v2_service.web_frontend.uri
+}
+
+output "web_frontend_service_account_email" {
+  description = "Service account used by the production frontend."
+  value       = google_service_account.web_frontend_runtime.email
+}
+
+output "web_frontend_artifact_registry_repository" {
+  description = "Artifact Registry repository for frontend images."
+  value       = google_artifact_registry_repository.web_frontend.repository_id
+}
+
 output "airflow_vm_instance_name" {
   description = "Name of the Airflow Compute Engine VM."
   value       = google_compute_instance.airflow_vm.name

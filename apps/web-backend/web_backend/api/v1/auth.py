@@ -7,6 +7,7 @@ No business logic lives here.
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from web_backend.config import get_settings
 from web_backend.constants.auth import REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH
 from web_backend.database import get_db
 from web_backend.models.user import AuthUser
@@ -31,21 +32,25 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
     """Set the refresh token as an HttpOnly secure cookie."""
+    settings = get_settings()
     response.set_cookie(
         key=REFRESH_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,  # Set True in production (HTTPS)
-        samesite="lax",
+        secure=settings.refresh_cookie_secure,
+        samesite=settings.refresh_cookie_samesite,
         path=REFRESH_COOKIE_PATH,
+        domain=settings.refresh_cookie_domain,
     )
 
 
 def _clear_refresh_cookie(response: Response) -> None:
     """Remove the refresh token cookie."""
+    settings = get_settings()
     response.delete_cookie(
         key=REFRESH_COOKIE_NAME,
         path=REFRESH_COOKIE_PATH,
+        domain=settings.refresh_cookie_domain,
     )
 
 

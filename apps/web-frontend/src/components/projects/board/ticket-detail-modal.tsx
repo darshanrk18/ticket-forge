@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
 import {
   AlertTriangle,
   Bookmark,
   Calendar as CalendarIcon,
   CheckSquare,
-  ChevronDown,
   Loader2,
   Tag,
   Trash2,
@@ -85,32 +84,51 @@ export function TicketDetailModal({
   onUpdated,
   onDeleted,
 }: TicketDetailModalProps) {
+  if (!ticket) return null;
+
+  return (
+    <TicketDetailEditor
+      key={`${ticket.ticket_key}:${open ? "open" : "closed"}`}
+      ticket={ticket}
+      projectSlug={projectSlug}
+      members={members}
+      open={open}
+      onClose={onClose}
+      onUpdated={onUpdated}
+      onDeleted={onDeleted}
+    />
+  );
+}
+
+interface TicketDetailEditorProps
+  extends Omit<TicketDetailModalProps, "ticket"> {
+  ticket: TicketResponse;
+}
+
+function TicketDetailEditor({
+  ticket,
+  projectSlug,
+  members,
+  open,
+  onClose,
+  onUpdated,
+  onDeleted,
+}: TicketDetailEditorProps) {
   const { token } = useAuth();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState("medium");
-  const [type, setType] = useState("task");
-  const [assigneeId, setAssigneeId] = useState<string | null>(null);
-  const [dueDate, setDueDate] = useState("");
-  const [labels, setLabels] = useState<string[]>([]);
+  const [title, setTitle] = useState(ticket.title);
+  const [description, setDescription] = useState(ticket.description || "");
+  const [priority, setPriority] = useState(ticket.priority);
+  const [type, setType] = useState(ticket.type);
+  const [assigneeId, setAssigneeId] = useState<string | null>(
+    ticket.assignee?.id || null
+  );
+  const [dueDate, setDueDate] = useState(ticket.due_date || "");
+  const [labels, setLabels] = useState<string[]>(ticket.labels || []);
   const [newLabel, setNewLabel] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showLabelInput, setShowLabelInput] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
-
-  // Sync state when ticket changes
-  useEffect(() => {
-    if (ticket) {
-      setTitle(ticket.title);
-      setDescription(ticket.description || "");
-      setPriority(ticket.priority);
-      setType(ticket.type);
-      setAssigneeId(ticket.assignee?.id || null);
-      setDueDate(ticket.due_date || "");
-      setLabels(ticket.labels || []);
-    }
-  }, [ticket]);
 
   const handleSave = useCallback(async () => {
     if (!token || !ticket) return;
@@ -195,8 +213,6 @@ export function TicketDetailModal({
   function removeLabel(label: string) {
     setLabels(labels.filter((l) => l !== label));
   }
-
-  if (!ticket) return null;
 
   const currentType = typeOptions.find((t) => t.value === type);
   const TypeIcon = currentType?.icon || CheckSquare;

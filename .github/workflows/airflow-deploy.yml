@@ -130,3 +130,114 @@ jobs:
         run: |
           airflow_url=$(terraform -chdir=terraform output -raw airflow_webserver_url)
           just gcp-airflow-smoketest "${airflow_url}"
+
+      - name: Collect deployment metadata
+        if: always()
+        id: deployment-meta
+        run: |
+          set -euo pipefail
+
+          instance_name=$(terraform -chdir=terraform output -raw airflow_vm_instance_name)
+          airflow_url=$(terraform -chdir=terraform output -raw airflow_webserver_url)
+          instance_id=$(gcloud compute instances describe "${instance_name}" \
+            --project="${TF_VAR_project_id}" \
+            --zone="${TF_VAR_zone}" \
+            --format='value(id)')
+          runtime_sha="$(gcloud compute ssh "${instance_name}" \
+            --project="${TF_VAR_project_id}" \
+            --zone="${TF_VAR_zone}" \
+            --tunnel-through-iap \
+            --quiet \
+            --command='cd /opt/ticket-forge && git rev-parse HEAD' 2>/dev/null || true)"
+
+          echo "instance_name=${instance_name}" >> "$GITHUB_OUTPUT"
+          echo "instance_id=${instance_id}" >> "$GITHUB_OUTPUT"
+          echo "airflow_url=${airflow_url}" >> "$GITHUB_OUTPUT"
+          echo "runtime_sha=${runtime_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Write deployment report
+        if: always()
+        run: |
+          mkdir -p reports/runtime
+          python3 - <<'EOF'
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import build_ops_report, write_ops_report
+
+          report = build_ops_report(
+            report_type="deployment",
+            workflow_name="Airflow Deploy",
+            status=os.environ["JOB_STATUS"],
+            trigger=os.environ["EVENT_NAME"],
+            trigger_reason=os.environ["TRIGGER_REASON"],
+            workflow_url=os.environ["WORKFLOW_URL"],
+            commit_sha=os.environ["COMMIT_SHA"],
+            source_ref=os.environ["SOURCE_REF"],
+            deployment_target=os.environ["DEPLOYMENT_TARGET"],
+            deployment_revision=os.environ["DEPLOYMENT_REVISION"],
+            metadata={
+              "airflow_url": os.environ["AIRFLOW_URL"],
+              "instance_id": os.environ["INSTANCE_ID"],
+            },
+          )
+          write_ops_report(Path("reports/runtime/airflow_deployment_report.json"), report)
+          EOF
+        env:
+          JOB_STATUS: ${{ job.status }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRIGGER_REASON: ${{ github.event_name == 'workflow_run' && 'ci-success' || 'manual-dispatch' }}
+          WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ steps.repo_ref.outputs.value }}
+          SOURCE_REF: ${{ steps.repo_ref.outputs.value }}
+          DEPLOYMENT_TARGET: ${{ steps.deployment-meta.outputs.instance_name }}
+          DEPLOYMENT_REVISION: ${{ steps.deployment-meta.outputs.runtime_sha }}
+          AIRFLOW_URL: ${{ steps.deployment-meta.outputs.airflow_url }}
+          INSTANCE_ID: ${{ steps.deployment-meta.outputs.instance_id }}
+
+      - name: Upload deployment report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: airflow-deployment-report-${{ github.run_id }}
+          path: reports/runtime/airflow_deployment_report.json
+          retention-days: 30
+
+      - name: Send deployment notification
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import send_gmail_notification
+
+          report_path = Path("reports/runtime/airflow_deployment_report.json")
+          if not report_path.exists():
+            raise SystemExit("deployment report missing")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          sender = os.environ.get("GMAIL_APP_USERNAME")
+          password = os.environ.get("GMAIL_APP_PASSWORD")
+          if not sender or not password:
+            print("GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD not set — skipping notification")
+            raise SystemExit(0)
+
+          send_gmail_notification(
+            report,
+            sender_email=sender,
+            sender_password=password,
+          )
+          print(f"Notification sent to {sender}")
+          EOF
+        env:
+          GMAIL_APP_USERNAME: ${{ secrets.GMAIL_APP_USERNAME }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        continue-on-error: true

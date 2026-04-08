@@ -141,6 +141,17 @@ class TestKeywordExtractor:
     assert "myframework" in keywords
     assert "customtool" in keywords
 
+  def test_extract_handles_large_capitalized_noise(
+    self,
+    extractor: KeywordExtractor,
+  ) -> None:
+    """Large capitalized noise should not prevent finding real skills."""
+    text = f"{'A' * 4000} Python AWS"
+    keywords = extractor.extract(text)
+
+    assert "python" in keywords
+    assert "aws" in keywords
+
   def test_get_keyword_extractor_singleton(self) -> None:
     """Test that get_keyword_extractor returns same instance."""
     extractor1 = get_keyword_extractor()

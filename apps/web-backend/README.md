@@ -6,6 +6,8 @@ FastAPI web service for serving ML model predictions and handling business logic
 
 RESTful API backend that:
 - Serves predictions from trained ML models
+- Pins the deployed revision to an exact MLflow Production model version
+- Persists inference telemetry for monitoring and drift detection
 - Handles ticket assignment recommendations
 - Provides health checks and status endpoints
 
@@ -25,6 +27,13 @@ Server will be available at `http://localhost:8000`
 
 - **Swagger UI**: `http://localhost:8000/docs`
 - **ReDoc**: `http://localhost:8000/redoc`
+
+Key production inference endpoints:
+
+- `GET /health`
+- `GET /api/v1/inference/model`
+- `POST /api/v1/inference/ticket-size`
+- `GET /api/v1/inference/monitoring/export`
 
 ## Structure
 

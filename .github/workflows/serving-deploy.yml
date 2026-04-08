@@ -1,0 +1,618 @@
+name: Serving Deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      deploy_backend:
+        description: "Deploy backend service"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      deploy_frontend:
+        description: "Deploy frontend service"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      serving_model_version:
+        description: "Optional explicit model version to pin in the backend"
+        required: false
+        default: ""
+        type: string
+      trigger_workflow:
+        description: "Optional upstream workflow name for reporting"
+        required: false
+        default: ""
+        type: string
+      trigger_run_id:
+        description: "Optional upstream workflow run id"
+        required: false
+        default: ""
+        type: string
+      trigger_run_url:
+        description: "Optional upstream workflow run URL"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: serving-deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_VAR_project_id: ${{ secrets.TF_VAR_PROJECT_ID || secrets.TF_VAR_project_id }}
+  TF_VAR_state_bucket: ${{ secrets.TF_VAR_STATE_BUCKET || secrets.TF_VAR_state_bucket }}
+  TF_VAR_region: ${{ secrets.TF_VAR_REGION || secrets.TF_VAR_region }}
+  TF_VAR_environment: prod
+
+jobs:
+  resolve-context:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_backend: ${{ steps.resolve.outputs.deploy_backend }}
+      deploy_frontend: ${{ steps.resolve.outputs.deploy_frontend }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      trigger_workflow: ${{ steps.resolve.outputs.trigger_workflow }}
+      trigger_run_id: ${{ steps.resolve.outputs.trigger_run_id }}
+      trigger_run_url: ${{ steps.resolve.outputs.trigger_run_url }}
+      trigger_kind: ${{ steps.resolve.outputs.trigger_kind }}
+      serving_model_version: ${{ steps.resolve.outputs.serving_model_version }}
+    steps:
+      - name: Resolve deploy context
+        id: resolve
+        env:
+          INPUT_TRIGGER_WORKFLOW: ${{ github.event.inputs.trigger_workflow }}
+          INPUT_TRIGGER_RUN_ID: ${{ github.event.inputs.trigger_run_id }}
+          INPUT_TRIGGER_RUN_URL: ${{ github.event.inputs.trigger_run_url }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.ref_name }}" != "main" ]]; then
+            echo "Serving deploy is restricted to the main branch" >&2
+            exit 1
+          fi
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "deploy_backend=true" >> "$GITHUB_OUTPUT"
+            echo "deploy_frontend=true" >> "$GITHUB_OUTPUT"
+            echo "source_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "source_ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "trigger_workflow=push-main" >> "$GITHUB_OUTPUT"
+            echo "trigger_run_id=" >> "$GITHUB_OUTPUT"
+            echo "trigger_run_url=" >> "$GITHUB_OUTPUT"
+            echo "trigger_kind=push" >> "$GITHUB_OUTPUT"
+            echo "serving_model_version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          trigger_workflow="${INPUT_TRIGGER_WORKFLOW:-}"
+          if [[ -z "${trigger_workflow}" ]]; then
+            trigger_workflow="manual-dispatch"
+          fi
+
+          echo "deploy_backend=${{ github.event.inputs.deploy_backend }}" >> "$GITHUB_OUTPUT"
+          echo "deploy_frontend=${{ github.event.inputs.deploy_frontend }}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "source_ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          echo "trigger_workflow=${trigger_workflow}" >> "$GITHUB_OUTPUT"
+          echo "trigger_run_id=${INPUT_TRIGGER_RUN_ID:-}" >> "$GITHUB_OUTPUT"
+          echo "trigger_run_url=${INPUT_TRIGGER_RUN_URL:-}" >> "$GITHUB_OUTPUT"
+          echo "trigger_kind=workflow_dispatch" >> "$GITHUB_OUTPUT"
+          echo "serving_model_version=${{ github.event.inputs.serving_model_version }}" >> "$GITHUB_OUTPUT"
+
+  wait-for-ci:
+    name: Deploy / Wait For CI Gate
+    needs: [resolve-context]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CI/CD on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          run_id=""
+          for _ in $(seq 1 30); do
+            runs_json="$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow "CI/CD" \
+              --branch "main" \
+              --event "push" \
+              --limit 20 \
+              --json databaseId,headSha,status,conclusion)"
+            run_id="$(
+              RUNS_JSON="${runs_json}" SOURCE_SHA="${SOURCE_SHA}" python3 - <<'PY'
+              import json
+              import os
+
+              runs = json.loads(os.environ["RUNS_JSON"])
+              for run in runs:
+                  if run.get("headSha") == os.environ["SOURCE_SHA"]:
+                      print(run.get("databaseId", ""))
+                      break
+              PY
+            )"
+            if [[ -n "${run_id}" ]]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ -z "${run_id}" ]]; then
+            echo "Could not find CI/CD workflow run for ${SOURCE_SHA}" >&2
+            exit 1
+          fi
+
+          gh run watch "${run_id}" --repo "${{ github.repository }}" --interval 10
+          conclusion="$(gh run view "${run_id}" --repo "${{ github.repository }}" --json conclusion --jq .conclusion)"
+          if [[ "${conclusion}" != "success" ]]; then
+            echo "CI/CD concluded with status ${conclusion}" >&2
+            exit 1
+          fi
+
+  bootstrap-serving-infra:
+    name: Deploy / Bootstrap Serving Infra
+    needs: [resolve-context, wait-for-ci]
+    if: >-
+      (needs.wait-for-ci.result == 'success' || needs.wait-for-ci.result == 'skipped') &&
+      (
+        needs.resolve-context.outputs.deploy_backend == 'true' ||
+        needs.resolve-context.outputs.deploy_frontend == 'true'
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      backend_service_name: ${{ steps.targets.outputs.backend_service_name }}
+      backend_service_url: ${{ steps.targets.outputs.backend_service_url }}
+      frontend_service_name: ${{ steps.targets.outputs.frontend_service_name }}
+      frontend_service_url: ${{ steps.targets.outputs.frontend_service_url }}
+      backend_repo: ${{ steps.targets.outputs.backend_repo }}
+      frontend_repo: ${{ steps.targets.outputs.frontend_repo }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: tf-apply-sa@${{ env.TF_VAR_project_id }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.TF_VAR_project_id }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init -backend-config="bucket=${TF_VAR_state_bucket}"
+
+      - name: Bootstrap serving resources when missing
+        run: |
+          set -euo pipefail
+
+          required_outputs=(
+            web_backend_service_name
+            web_backend_service_url
+            web_frontend_service_name
+            web_frontend_service_url
+            web_backend_artifact_registry_repository
+            web_frontend_artifact_registry_repository
+          )
+
+          bootstrap_required="false"
+          for output_name in "${required_outputs[@]}"; do
+            if ! terraform -chdir=terraform output -raw "${output_name}" >/dev/null 2>&1; then
+              bootstrap_required="true"
+              break
+            fi
+          done
+
+          if [[ "${bootstrap_required}" == "false" ]]; then
+            echo "Serving infra already present in Terraform state"
+            exit 0
+          fi
+
+          terraform -chdir=terraform apply -auto-approve \
+            -target=google_cloud_run_v2_service.web_backend \
+            -target=google_cloud_run_v2_service.web_frontend \
+            -target=google_cloud_run_v2_service_iam_member.web_backend_public_invoker \
+            -target=google_cloud_run_v2_service_iam_member.web_frontend_public_invoker \
+            -var="project_id=${TF_VAR_project_id}" \
+            -var="state_bucket=${TF_VAR_state_bucket}" \
+            -var="region=${TF_VAR_region}" \
+            -var="environment=${TF_VAR_environment}"
+
+      - name: Resolve serving targets
+        id: targets
+        run: |
+          echo "backend_service_name=$(terraform -chdir=terraform output -raw web_backend_service_name)" >> "$GITHUB_OUTPUT"
+          echo "backend_service_url=$(terraform -chdir=terraform output -raw web_backend_service_url)" >> "$GITHUB_OUTPUT"
+          echo "frontend_service_name=$(terraform -chdir=terraform output -raw web_frontend_service_name)" >> "$GITHUB_OUTPUT"
+          echo "frontend_service_url=$(terraform -chdir=terraform output -raw web_frontend_service_url)" >> "$GITHUB_OUTPUT"
+          echo "backend_repo=$(terraform -chdir=terraform output -raw web_backend_artifact_registry_repository)" >> "$GITHUB_OUTPUT"
+          echo "frontend_repo=$(terraform -chdir=terraform output -raw web_frontend_artifact_registry_repository)" >> "$GITHUB_OUTPUT"
+
+  deploy-backend:
+    name: Deploy / Backend Serving API
+    needs: [resolve-context, wait-for-ci, bootstrap-serving-infra]
+    if: >-
+      (needs.wait-for-ci.result == 'success' || needs.wait-for-ci.result == 'skipped') &&
+      needs.resolve-context.outputs.deploy_backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: tf-apply-sa@${{ env.TF_VAR_project_id }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.TF_VAR_project_id }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init -backend-config="bucket=${TF_VAR_state_bucket}"
+
+      - name: Resolve serving model version
+        id: model-version
+        env:
+          MANUAL_MODEL_VERSION: ${{ needs.resolve-context.outputs.serving_model_version }}
+          BACKEND_SERVICE_NAME: ${{ needs.bootstrap-serving-infra.outputs.backend_service_name }}
+        run: |
+          set -euo pipefail
+
+          resolved_version="${MANUAL_MODEL_VERSION}"
+          if [[ -z "${resolved_version}" ]]; then
+            service_json="$(gcloud run services describe "${BACKEND_SERVICE_NAME}" \
+              --region="${TF_VAR_region}" \
+              --format=json)"
+            resolved_version="$(
+              SERVICE_JSON="${service_json}" python3 - <<'PY'
+              import json
+              import os
+
+              service = json.loads(os.environ["SERVICE_JSON"])
+              envs = (
+                  service.get("spec", {})
+                  .get("template", {})
+                  .get("containers", [{}])[0]
+                  .get("env", [])
+              )
+              for item in envs:
+                  if item.get("name") == "SERVING_MODEL_VERSION":
+                      print(item.get("value", ""))
+                      break
+              else:
+                  print("")
+              PY
+            )"
+          fi
+
+          echo "value=${resolved_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${TF_VAR_region}-docker.pkg.dev" --quiet
+
+      - name: Build and push backend image
+        id: image
+        env:
+          BACKEND_REPO: ${{ needs.bootstrap-serving-infra.outputs.backend_repo }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          short_sha="${SOURCE_SHA::12}"
+          image="${TF_VAR_region}-docker.pkg.dev/${TF_VAR_project_id}/${BACKEND_REPO}/web-backend:${short_sha}"
+          docker build -f apps/web-backend/Dockerfile -t "${image}" .
+          docker push "${image}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply backend deployment
+        env:
+          BACKEND_IMAGE: ${{ steps.image.outputs.image }}
+          FRONTEND_SERVICE_URL: ${{ needs.bootstrap-serving-infra.outputs.frontend_service_url }}
+          SERVING_MODEL_VERSION: ${{ steps.model-version.outputs.value }}
+        run: |
+          terraform -chdir=terraform apply -auto-approve \
+            -target=google_cloud_run_v2_service.web_backend \
+            -var="project_id=${TF_VAR_project_id}" \
+            -var="state_bucket=${TF_VAR_state_bucket}" \
+            -var="region=${TF_VAR_region}" \
+            -var="environment=${TF_VAR_environment}" \
+            -var="web_backend_image=${BACKEND_IMAGE}" \
+            -var="web_backend_serving_model_version=${SERVING_MODEL_VERSION}" \
+            -var="web_backend_cors_origins=[\"${FRONTEND_SERVICE_URL}\"]"
+
+      - name: Smoke test backend
+        run: |
+          bash scripts/ci/backend_smoketest.sh \
+            "${{ needs.bootstrap-serving-infra.outputs.backend_service_url }}" \
+            "${{ steps.model-version.outputs.value }}"
+
+      - name: Collect backend deployment metadata
+        if: always()
+        id: deployment-meta
+        env:
+          BACKEND_SERVICE_NAME: ${{ needs.bootstrap-serving-infra.outputs.backend_service_name }}
+        run: |
+          revision="$(gcloud run services describe "${BACKEND_SERVICE_NAME}" \
+            --region="${TF_VAR_region}" \
+            --format='value(status.latestReadyRevisionName)' || true)"
+          echo "revision=${revision}" >> "$GITHUB_OUTPUT"
+
+      - name: Write backend deployment report
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          SOURCE_REF: ${{ needs.resolve-context.outputs.source_ref }}
+          TRIGGER_KIND: ${{ needs.resolve-context.outputs.trigger_kind }}
+          TRIGGER_WORKFLOW: ${{ needs.resolve-context.outputs.trigger_workflow }}
+          TRIGGER_RUN_URL: ${{ needs.resolve-context.outputs.trigger_run_url }}
+          MODEL_VERSION: ${{ steps.model-version.outputs.value }}
+          BACKEND_SERVICE_URL: ${{ needs.bootstrap-serving-infra.outputs.backend_service_url }}
+          BACKEND_REVISION: ${{ steps.deployment-meta.outputs.revision }}
+          BACKEND_IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          mkdir -p reports/runtime
+          python3 - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import build_ops_report, write_ops_report
+
+          failure_reasons = []
+          if os.environ["JOB_STATUS"] != "success":
+              failure_reasons.append("backend-deploy-or-smoketest-failed")
+
+          report = build_ops_report(
+              report_type="deployment",
+              workflow_name="Serving Deploy / Backend",
+              status=os.environ["JOB_STATUS"],
+              trigger=os.environ["TRIGGER_KIND"],
+              trigger_reason=os.environ["TRIGGER_WORKFLOW"],
+              workflow_url=f"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+              commit_sha=os.environ["SOURCE_SHA"],
+              source_ref=os.environ["SOURCE_REF"],
+              model_version=os.environ["MODEL_VERSION"] or None,
+              deployment_target=os.environ["BACKEND_SERVICE_URL"],
+              deployment_revision=os.environ["BACKEND_REVISION"] or None,
+              failure_reasons=failure_reasons,
+              metadata={
+                  "trigger_run_url": os.environ["TRIGGER_RUN_URL"],
+                  "image": os.environ["BACKEND_IMAGE"],
+              },
+          )
+          write_ops_report(Path("reports/runtime/backend_deployment_report.json"), report)
+          PY
+
+      - name: Upload backend deployment report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-deployment-report-${{ github.run_id }}
+          path: reports/runtime/backend_deployment_report.json
+          retention-days: 30
+
+      - name: Send backend deployment notification
+        if: always()
+        env:
+          GMAIL_APP_USERNAME: ${{ secrets.GMAIL_APP_USERNAME }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import send_gmail_notification
+
+          report_path = Path("reports/runtime/backend_deployment_report.json")
+          if not report_path.exists():
+              raise SystemExit("backend deployment report missing")
+
+          sender = os.environ.get("GMAIL_APP_USERNAME")
+          password = os.environ.get("GMAIL_APP_PASSWORD")
+          if not sender or not password:
+              raise SystemExit("GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD not set")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          send_gmail_notification(
+              report,
+              sender_email=sender,
+              sender_password=password,
+          )
+          PY
+        continue-on-error: true
+
+  deploy-frontend:
+    name: Deploy / Frontend Web App
+    needs: [resolve-context, wait-for-ci, bootstrap-serving-infra, deploy-backend]
+    if: >-
+      (needs.wait-for-ci.result == 'success' || needs.wait-for-ci.result == 'skipped') &&
+      needs.resolve-context.outputs.deploy_frontend == 'true' &&
+      (needs.deploy-backend.result == 'success' || needs.deploy-backend.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: tf-apply-sa@${{ env.TF_VAR_project_id }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.TF_VAR_project_id }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init -backend-config="bucket=${TF_VAR_state_bucket}"
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${TF_VAR_region}-docker.pkg.dev" --quiet
+
+      - name: Build and push frontend image
+        id: image
+        env:
+          FRONTEND_REPO: ${{ needs.bootstrap-serving-infra.outputs.frontend_repo }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          BACKEND_SERVICE_URL: ${{ needs.bootstrap-serving-infra.outputs.backend_service_url }}
+        run: |
+          set -euo pipefail
+          short_sha="${SOURCE_SHA::12}"
+          image="${TF_VAR_region}-docker.pkg.dev/${TF_VAR_project_id}/${FRONTEND_REPO}/web-frontend:${short_sha}"
+          docker build \
+            -f apps/web-frontend/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL="${BACKEND_SERVICE_URL}" \
+            -t "${image}" .
+          docker push "${image}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply frontend deployment
+        env:
+          FRONTEND_IMAGE: ${{ steps.image.outputs.image }}
+          BACKEND_SERVICE_URL: ${{ needs.bootstrap-serving-infra.outputs.backend_service_url }}
+        run: |
+          terraform -chdir=terraform apply -auto-approve \
+            -target=google_cloud_run_v2_service.web_frontend \
+            -var="project_id=${TF_VAR_project_id}" \
+            -var="state_bucket=${TF_VAR_state_bucket}" \
+            -var="region=${TF_VAR_region}" \
+            -var="environment=${TF_VAR_environment}" \
+            -var="web_frontend_image=${FRONTEND_IMAGE}" \
+            -var="web_frontend_api_url=${BACKEND_SERVICE_URL}"
+
+      - name: Smoke test frontend
+        run: bash scripts/ci/frontend_smoketest.sh "${{ needs.bootstrap-serving-infra.outputs.frontend_service_url }}"
+
+      - name: Collect frontend deployment metadata
+        if: always()
+        id: deployment-meta
+        env:
+          FRONTEND_SERVICE_NAME: ${{ needs.bootstrap-serving-infra.outputs.frontend_service_name }}
+        run: |
+          revision="$(gcloud run services describe "${FRONTEND_SERVICE_NAME}" \
+            --region="${TF_VAR_region}" \
+            --format='value(status.latestReadyRevisionName)' || true)"
+          echo "revision=${revision}" >> "$GITHUB_OUTPUT"
+
+      - name: Write frontend deployment report
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          SOURCE_REF: ${{ needs.resolve-context.outputs.source_ref }}
+          TRIGGER_KIND: ${{ needs.resolve-context.outputs.trigger_kind }}
+          TRIGGER_WORKFLOW: ${{ needs.resolve-context.outputs.trigger_workflow }}
+          TRIGGER_RUN_URL: ${{ needs.resolve-context.outputs.trigger_run_url }}
+          FRONTEND_SERVICE_URL: ${{ needs.bootstrap-serving-infra.outputs.frontend_service_url }}
+          FRONTEND_REVISION: ${{ steps.deployment-meta.outputs.revision }}
+          FRONTEND_IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          mkdir -p reports/runtime
+          python3 - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import build_ops_report, write_ops_report
+
+          failure_reasons = []
+          if os.environ["JOB_STATUS"] != "success":
+              failure_reasons.append("frontend-deploy-or-smoketest-failed")
+
+          report = build_ops_report(
+              report_type="deployment",
+              workflow_name="Serving Deploy / Frontend",
+              status=os.environ["JOB_STATUS"],
+              trigger=os.environ["TRIGGER_KIND"],
+              trigger_reason=os.environ["TRIGGER_WORKFLOW"],
+              workflow_url=f"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+              commit_sha=os.environ["SOURCE_SHA"],
+              source_ref=os.environ["SOURCE_REF"],
+              deployment_target=os.environ["FRONTEND_SERVICE_URL"],
+              deployment_revision=os.environ["FRONTEND_REVISION"] or None,
+              failure_reasons=failure_reasons,
+              metadata={
+                  "trigger_run_url": os.environ["TRIGGER_RUN_URL"],
+                  "image": os.environ["FRONTEND_IMAGE"],
+              },
+          )
+          write_ops_report(Path("reports/runtime/frontend_deployment_report.json"), report)
+          PY
+
+      - name: Upload frontend deployment report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-deployment-report-${{ github.run_id }}
+          path: reports/runtime/frontend_deployment_report.json
+          retention-days: 30
+
+      - name: Send frontend deployment notification
+        if: always()
+        env:
+          GMAIL_APP_USERNAME: ${{ secrets.GMAIL_APP_USERNAME }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "apps/training")
+
+          from training.analysis.ops_report import send_gmail_notification
+
+          report_path = Path("reports/runtime/frontend_deployment_report.json")
+          if not report_path.exists():
+              raise SystemExit("frontend deployment report missing")
+
+          sender = os.environ.get("GMAIL_APP_USERNAME")
+          password = os.environ.get("GMAIL_APP_PASSWORD")
+          if not sender or not password:
+              raise SystemExit("GMAIL_APP_USERNAME / GMAIL_APP_PASSWORD not set")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          send_gmail_notification(
+              report,
+              sender_email=sender,
+              sender_password=password,
+          )
+          PY
+        continue-on-error: true

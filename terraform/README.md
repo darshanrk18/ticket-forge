@@ -5,6 +5,7 @@ This folder manages ticket-forge infrastructure on GCP, including:
 - Terraform state and DVC/model storage buckets.
 - GitHub Actions Workload Identity Federation service accounts.
 - A private MLflow tracking server on Cloud Run with shared Cloud SQL backend.
+- Public Cloud Run services for the production backend and frontend.
 - Airflow runtime on Compute Engine VM with IAP/internal-only web access.
 - Cloud Storage training artifacts bucket with `index.json` dataset pointer.
 
@@ -19,6 +20,10 @@ This feature provisions a hosted Airflow runtime and cloud dataset storage:
 - `google_sql_database.mlflow`: MLflow backend database.
 - `google_storage_bucket.training_artifacts`: training datasets/models/manifests.
 - `google_storage_bucket_object.training_index`: bootstrap `index.json` manifest.
+- `google_cloud_run_v2_service.web_backend`: production inference + API service.
+- `google_cloud_run_v2_service.web_frontend`: production web application.
+- `google_artifact_registry_repository.web_backend`: backend image repository.
+- `google_artifact_registry_repository.web_frontend`: frontend image repository.
 
 Important variables:
 
@@ -27,6 +32,10 @@ Important variables:
 - `shared_cloud_sql_instance_name`
 - `mlflow_db_tier`, `cloud_sql_max_connections`
 - `ticketforge_db_name`, `ticketforge_db_user`
+- `web_backend_service_name`, `web_frontend_service_name`
+- `web_backend_image`, `web_frontend_image`
+- `web_backend_cors_origins`, `web_frontend_api_url`
+- `web_backend_serving_model_version`
 - `training_bucket_name`
 - `airflow_github_token_secret_id`, `airflow_gmail_app_username_secret_id`, `airflow_gmail_app_password_secret_id`
 
@@ -35,6 +44,7 @@ Important outputs:
 - `airflow_webserver_url`, `airflow_vm_external_ip`
 - `cloud_sql_instance_connection_name`, `cloud_sql_private_ip`
 - `training_bucket_gs_uri`
+- `web_backend_service_url`, `web_frontend_service_url`
 
 ## Access model
 
