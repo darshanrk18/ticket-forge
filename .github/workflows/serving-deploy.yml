@@ -147,19 +147,7 @@ jobs:
           for _ in $(seq 1 90); do
             jobs_json="$(gh run view "${run_id}" --repo "${{ github.repository }}" --json jobs)"
             gate_result="$(
-              JOBS_JSON="${jobs_json}" python3 -c '
-              import json
-              import os
-
-              jobs = json.loads(os.environ["JOBS_JSON"]).get("jobs", [])
-              gate = next((job for job in jobs if job.get("name") == "Check / Finished"), None)
-              if gate is None:
-                  print("missing")
-              elif gate.get("status") != "completed":
-                  print("pending")
-              else:
-                  print(gate.get("conclusion") or "unknown")
-              '
+              JOBS_JSON="${jobs_json}" python3 -c 'import json, os; jobs = json.loads(os.environ["JOBS_JSON"]).get("jobs", []); gate = next((job for job in jobs if job.get("name") == "Check / Finished"), None); print("missing" if gate is None else "pending" if gate.get("status") != "completed" else (gate.get("conclusion") or "unknown"))'
             )"
 
             case "${gate_result}" in
