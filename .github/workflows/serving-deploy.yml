@@ -321,10 +321,12 @@ jobs:
         env:
           BACKEND_REPO: ${{ needs.bootstrap-serving-infra.outputs.backend_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           short_sha="${SOURCE_SHA::12}"
-          image="${TF_VAR_region}-docker.pkg.dev/${TF_VAR_project_id}/${BACKEND_REPO}/web-backend:${short_sha}"
+          image="${TF_VAR_region}-docker.pkg.dev/${TF_VAR_project_id}/${BACKEND_REPO}/web-backend:${short_sha}-${RUN_ID}-${RUN_ATTEMPT}"
           docker build -f apps/web-backend/Dockerfile -t "${image}" .
           docker push "${image}"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
@@ -493,10 +495,12 @@ jobs:
           FRONTEND_REPO: ${{ needs.bootstrap-serving-infra.outputs.frontend_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
           BACKEND_SERVICE_URL: ${{ needs.bootstrap-serving-infra.outputs.backend_service_url }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           short_sha="${SOURCE_SHA::12}"
-          image="${TF_VAR_region}-docker.pkg.dev/${TF_VAR_project_id}/${FRONTEND_REPO}/web-frontend:${short_sha}"
+          image="${TF_VAR_region}-docker.pkg.dev/${TF_VAR_project_id}/${FRONTEND_REPO}/web-frontend:${short_sha}-${RUN_ID}-${RUN_ATTEMPT}"
           docker build \
             -f apps/web-frontend/Dockerfile \
             --build-arg NEXT_PUBLIC_API_URL="${BACKEND_SERVICE_URL}" \

@@ -20,6 +20,26 @@ if [[ "${health_status}" != "200" ]]; then
   exit 1
 fi
 
+python3 - "${health_file}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload_path = Path(sys.argv[1])
+raw = payload_path.read_text(encoding="utf-8")
+
+try:
+    payload = json.loads(raw)
+except json.JSONDecodeError as exc:
+    raise SystemExit(
+        "Backend health check did not return JSON. "
+        f"Body was: {raw[:200]!r}. Error: {exc}"
+    )
+
+if payload.get("status") != "ok":
+    raise SystemExit(f"Unexpected health payload: {payload}")
+PY
+
 prediction_status="$(
   curl -sS -o "${prediction_file}" -w '%{http_code}' \
     -X POST \
@@ -50,7 +70,14 @@ import json
 import sys
 from pathlib import Path
 
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+raw = Path(sys.argv[1]).read_text(encoding="utf-8")
+try:
+    payload = json.loads(raw)
+except json.JSONDecodeError as exc:
+    raise SystemExit(
+        "Backend inference smoke test returned non-JSON content. "
+        f"Body was: {raw[:200]!r}. Error: {exc}"
+    )
 expected_version = sys.argv[2]
 
 required_top_level = {
