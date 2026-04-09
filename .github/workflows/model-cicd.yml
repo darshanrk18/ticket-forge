@@ -1,9 +1,8 @@
 name: Model CI/CD
 
 on:
-  workflow_run:
-    workflows: ["CI/CD"]
-    types: [completed]
+  push:
+    branches: ["main"]
   schedule:
     # Run every Monday at 02:00 UTC
     - cron: "0 2 * * 1"
@@ -33,15 +32,71 @@ permissions:
   id-token: write
 
 jobs:
+  wait-for-ci:
+    name: Train / Wait For CI Gate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CI/CD on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          run_id=""
+          for _ in $(seq 1 30); do
+            runs_json="$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow "CI/CD" \
+              --branch "main" \
+              --event "push" \
+              --limit 20 \
+              --json databaseId,headSha,status,conclusion)"
+            run_id="$(RUNS_JSON="${runs_json}" SOURCE_SHA="${SOURCE_SHA}" python3 -c 'import json, os; runs = json.loads(os.environ["RUNS_JSON"]); print(next((str(run.get("databaseId", "")) for run in runs if run.get("headSha") == os.environ["SOURCE_SHA"]), ""))')"
+            if [[ -n "${run_id}" ]]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ -z "${run_id}" ]]; then
+            echo "Could not find CI/CD workflow run for ${SOURCE_SHA}" >&2
+            exit 1
+          fi
+
+          for _ in $(seq 1 90); do
+            jobs_json="$(gh run view "${run_id}" --repo "${{ github.repository }}" --json jobs)"
+            gate_result="$(
+              JOBS_JSON="${jobs_json}" python3 -c 'import json, os; jobs = json.loads(os.environ["JOBS_JSON"]).get("jobs", []); gate = next((job for job in jobs if job.get("name") == "Check / Finished"), None); print("missing" if gate is None else "pending" if gate.get("status") != "completed" else (gate.get("conclusion") or "unknown"))'
+            )"
+
+            case "${gate_result}" in
+              success)
+                exit 0
+                ;;
+              pending|missing)
+                sleep 10
+                ;;
+              *)
+                echo "CI/CD test gate concluded with status ${gate_result}" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Timed out waiting for CI/CD test gate on ${SOURCE_SHA}" >&2
+          exit 1
+
   train-and-promote:
     name: Train / Run & Promote Best Model
+    needs: [wait-for-ci]
     if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
+      (needs.wait-for-ci.result == 'success' || needs.wait-for-ci.result == 'skipped') &&
       (
-        github.event_name == 'workflow_run' &&
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_branch == 'main'
+        github.event_name == 'push' ||
+        github.event_name == 'schedule' ||
+        github.event_name == 'workflow_dispatch'
       )
     runs-on: ubuntu-latest
     outputs:

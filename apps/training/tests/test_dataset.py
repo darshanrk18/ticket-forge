@@ -275,8 +275,10 @@ class TestFindLatestPipelineOutput:
       with pytest.raises(FileNotFoundError) as exc_info:
         find_latest_pipeline_output()
 
-      assert "Dataset override" in str(exc_info.value)
-      assert "missing tickets_transformed_improved.jsonl" in str(exc_info.value)
+      message = str(exc_info.value)
+      assert "Dataset override" in message
+      assert "tickets_balanced.jsonl" in message
+      assert "tickets_transformed_improved.jsonl" in message
 
   def test_accepts_gzip_dataset_override(self, tmp_path):
     from training.dataset import find_latest_pipeline_output

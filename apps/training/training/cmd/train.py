@@ -303,6 +303,92 @@ def _save_best_model_info(best_models: list, run_dir: Path) -> None:
   logger.info("=" * 50)
 
 
+def _save_confusion_matrices(run_dir: Path) -> None:
+  """Load confusion matrices from eval JSON files and save formatted versions.
+
+  Creates:
+  - confusion_{model_name}.txt: Formatted text tables with class labels (S, M, L, XL)
+  - confusion_matrices_plot.png: Visual heatmap of best model's confusion matrix
+
+  Classes are ordered as: S (0-10h), M (10-50h), L (50-100h), XL (100-480h)
+
+  Args:
+      run_dir: Directory containing eval_*.json files
+  """
+  import numpy as np
+  from sklearn.metrics import ConfusionMatrixDisplay
+
+  class_labels = ["S", "M", "L", "XL"]
+
+  best_model = None
+  best_cm = None
+  best_f1 = -1
+
+  # Process each model's confusion matrix
+  for eval_file in run_dir.glob("eval_*.json"):
+    model_name = eval_file.stem.replace("eval_", "")
+    with open(eval_file) as f:
+      metrics = json.load(f)
+
+    if "confusion_matrix" not in metrics:
+      continue
+
+    cm = np.array(metrics["confusion_matrix"])
+    f1_score = metrics.get("macro_f1", 0)
+
+    # Save formatted text version
+    cm_file = run_dir / f"confusion_{model_name}.txt"
+    with open(cm_file, "w") as f:
+      f.write(f"Confusion Matrix: {model_name}\n")
+      f.write("=" * 50 + "\n\n")
+      f.write(f"Macro F1: {f1_score:.4f}\n\n")
+
+      # Header row with predicted labels
+      f.write("                  PREDICTED\n")
+      header_labels = "   ".join(f"{label:>5}" for label in class_labels)
+      f.write("              " + header_labels + "\n")
+      f.write("          " + "-" * 35 + "\n")
+
+      # Data rows with actual labels
+      for i, actual_label in enumerate(class_labels):
+        row_values = cm[i].astype(int)
+        row_str = "   ".join(f"{v:>5}" for v in row_values)
+        f.write(f"ACTUAL {actual_label} | " + row_str + "\n")
+
+      # Summary statistics
+      f.write("\n" + "=" * 50 + "\n")
+      f.write("Per-Class Support (Actual Counts):\n")
+      for i, label in enumerate(class_labels):
+        count = int(cm[i].sum())
+        f.write(f"  {label}: {count:,}\n")
+
+    logger.info("Confusion matrix saved: %s", cm_file)
+
+    # Track best model for visualization
+    if f1_score > best_f1:
+      best_f1 = f1_score
+      best_model = model_name
+      best_cm = cm
+
+  # Create heatmap visualization of best model
+  if best_cm is not None and best_model is not None:
+    try:
+      fig, ax = plt.subplots(figsize=(10, 8))
+      disp = ConfusionMatrixDisplay(
+        confusion_matrix=best_cm,
+        display_labels=class_labels,
+      )
+      disp.plot(ax=ax, cmap="Blues", values_format="d")
+      ax.set_title(f"Confusion Matrix: {best_model.upper()}\n(Macro F1: {best_f1:.4f})")
+
+      cm_plot = run_dir / "confusion_matrices_plot.png"
+      plt.savefig(cm_plot, dpi=100, bbox_inches="tight")
+      plt.close()
+      logger.info("Confusion matrix plot saved: %s", cm_plot)
+    except Exception:
+      logger.exception("Failed to create confusion matrix plot")
+
+
 def _run_mlflow_training_pipeline(
   models_list: set[str],
   run_id: str,
@@ -339,6 +425,13 @@ def _run_mlflow_training_pipeline(
     best_file = run_dir / "best.txt"
     if best_file.exists():
       mlflow.log_artifact(str(best_file), artifact_path="summary")
+
+    _save_confusion_matrices(run_dir)
+    cm_plot = run_dir / "confusion_matrices_plot.png"
+    if cm_plot.exists():
+      mlflow.log_artifact(str(cm_plot), artifact_path="plots")
+    for cm_file in run_dir.glob("confusion_*.txt"):
+      mlflow.log_artifact(str(cm_file), artifact_path="confusion_matrices")
 
     try:
       from training.analysis.run_sensitivity_analysis import (
