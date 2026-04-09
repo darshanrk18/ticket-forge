@@ -8,6 +8,7 @@ on:
       - "apps/training/**"
       - "apps/pipelines/**"
       - "libs/**"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 permissions:
@@ -83,8 +84,11 @@ jobs:
   deploy:
     needs: [wait-for-ci]
     if: >-
-      needs.wait-for-ci.result == 'success' ||
-      needs.wait-for-ci.result == 'skipped'
+      always() &&
+      (
+        needs.wait-for-ci.result == 'success' ||
+        needs.wait-for-ci.result == 'skipped'
+      )
     runs-on: ubuntu-latest
 
     steps:
