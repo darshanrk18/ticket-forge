@@ -274,20 +274,26 @@ jobs:
               return json.loads(raw)
 
           def image(service: dict) -> str:
-              return (
-                  service.get("spec", {})
-                  .get("template", {})
-                  .get("containers", [{}])[0]
-                  .get("image", "")
-              )
+              containers = containers_for(service)
+              return containers[0].get("image", "") if containers else ""
+
+          def containers_for(service: dict) -> list[dict]:
+              # Cloud Run describe output differs between v1/v2 APIs.
+              spec_template = service.get("spec", {}).get("template", {})
+              if isinstance(spec_template, dict):
+                  containers = spec_template.get("containers", [])
+                  if isinstance(containers, list):
+                      return containers
+              template = service.get("template", {})
+              if isinstance(template, dict):
+                  containers = template.get("containers", [])
+                  if isinstance(containers, list):
+                      return containers
+              return []
 
           def env_value(service: dict, name: str) -> str:
-              envs = (
-                  service.get("spec", {})
-                  .get("template", {})
-                  .get("containers", [{}])[0]
-                  .get("env", [])
-              )
+              containers = containers_for(service)
+              envs = containers[0].get("env", []) if containers else []
               for item in envs:
                   if item.get("name") == name:
                       return item.get("value", "")
