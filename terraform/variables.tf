@@ -342,3 +342,49 @@ variable "enable_terraform_state_bucket" {
   type        = bool
   default     = true
 }
+
+variable "enable_ticketforge_app_cloud_run" {
+  description = <<-EOT
+    Provision optional Cloud Run (v2) services for the TicketForge FastAPI API,
+    lightweight inference HTTP process, and Next.js frontend. Requires three
+    container image URIs via ticketforge_*_container_image variables.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "ticketforge_api_service_name" {
+  description = "Cloud Run service name for the TicketForge FastAPI API."
+  type        = string
+  default     = "ticketforge-api"
+}
+
+variable "ticketforge_inference_service_name" {
+  description = "Cloud Run service name for the TicketForge inference stub."
+  type        = string
+  default     = "ticketforge-inference"
+}
+
+variable "ticketforge_web_service_name" {
+  description = "Cloud Run service name for the TicketForge Next.js UI."
+  type        = string
+  default     = "ticketforge-web"
+}
+
+variable "ticketforge_api_container_image" {
+  description = "Container image URI for the API service (FastAPI / Uvicorn on port 8080)."
+  type        = string
+  default     = ""
+}
+
+variable "ticketforge_inference_container_image" {
+  description = "Container image URI for the inference service (FastAPI stub on port 8080)."
+  type        = string
+  default     = ""
+}
+
+variable "ticketforge_web_container_image" {
+  description = "Container image URI for the web service (Next.js on port 8080)."
+  type        = string
+  default     = ""
+}

@@ -32,3 +32,9 @@ mlflow_db_tier  = "db-custom-1-3840"
 # airflow_admin_password = "set-via-secret-manager-or-tf-var"
 # airflow_db_password = "set-via-secret-manager-or-tf-var"
 # ticketforge_db_password = "set-via-secret-manager-or-tf-var"
+
+# Optional: deploy FastAPI + inference stub + Next.js on Cloud Run
+# enable_ticketforge_app_cloud_run = true
+# ticketforge_api_container_image       = "us-east1-docker.pkg.dev/your-project/ticketforge-apps/ticketforge-api:git-sha"
+# ticketforge_inference_container_image = "us-east1-docker.pkg.dev/your-project/ticketforge-apps/ticketforge-inference:git-sha"
+# ticketforge_web_container_image       = "us-east1-docker.pkg.dev/your-project/ticketforge-apps/ticketforge-web:git-sha"

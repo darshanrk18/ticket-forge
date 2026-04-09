@@ -1,6 +1,69 @@
 # Deployment, Monitoring, and Submission Readiness
 
-This document groups the operational deliverables for issues `#104` to `#107`.
+This document is the consolidated deployment, architecture, monitoring, and
+submission readiness report for the project.
+
+## 0. Architecture Decision (Cloud Deployment)
+
+### Context
+
+The serving platform must host and operate:
+- FastAPI backend (`web-backend`)
+- lightweight inference HTTP service (`training/inference_app.py`)
+- Next.js frontend (`web-frontend`)
+
+The deployment model must be reproducible from infrastructure-as-code, validated
+in CI, and operationally lightweight for a student team.
+
+### Decision
+
+Use Google Cloud Run for serving workloads, with Terraform-managed resources and
+Artifact Registry images.
+
+Concretely:
+- App-serving stack in `terraform/app_serving.tf`:
+  - `ticketforge-api`
+  - `ticketforge-inference`
+  - `ticketforge-web`
+- Production images:
+  - API: `docker/base.Dockerfile` target `cloudrun-web-backend`
+  - Inference: `docker/inference.Dockerfile`
+  - Frontend: `docker/frontend.Dockerfile`
+- CI image build gate:
+  - `.github/workflows/ci.yml` job `docker-build-apps`
+
+### Rationale
+
+Cloud Run provides:
+- low operational overhead (no cluster/node management)
+- fast rollout path for containers
+- elastic scaling with pay-per-use economics
+- direct integration with IAM, Secret Manager, Artifact Registry, and Terraform
+- independent service release cadence (API, inference, frontend)
+
+### Alternatives considered
+
+1. GKE:
+   - Pros: orchestration flexibility.
+   - Cons: unnecessary operational complexity for project scope.
+2. VM-only serving:
+   - Pros: full host control.
+   - Cons: manual scaling and rollout burden.
+3. Single combined service:
+   - Pros: fewer deploy units.
+   - Cons: tighter coupling and less independent scaling.
+
+### Consequences
+
+Positive:
+- repeatable provisioning with endpoint outputs
+- clear service separation
+- CI catches container regressions early
+
+Tradeoffs:
+- Cloud Run provider/runtime constraints require careful config
+  (for example memory sizing and reserved env names)
+- existing environments may require Terraform import of pre-existing resources
 
 ## 1. Deployment Automation and Release Management
 
@@ -9,6 +72,8 @@ Primary workflows:
 - `.github/workflows/ci.yml`
   - blocks deployment until repository sanity, model, backend, frontend,
     CodeQL, and Terraform checks succeed.
+  - includes `docker-build-apps` verification for app-serving images
+    (`ticketforge-api`, `ticketforge-inference`, `ticketforge-web`)
 - `.github/workflows/airflow-deploy.yml`
   - deploys the Airflow runtime after successful `CI/CD` runs on `main`
   - records deployment traceability in `reports/runtime/airflow_deployment_report.json`
@@ -30,6 +95,11 @@ Primary workflows:
     - `models/<run_id>/gate_report.json`
     - `models/<run_id>/run_manifest.json`
     - `models/<run_id>/operations_report.json`
+- `.github/workflows/ticketforge-app-serving-deploy.yml`
+  - triggers on successful `CI/CD` completion for `main`
+  - builds and pushes `linux/amd64` images for API, inference, and web
+  - applies `terraform/app_serving.tf` resources via Workload Identity Federation
+  - validates public endpoint health checks after apply
 
 Release traceability now covers:
 
@@ -60,6 +130,7 @@ Required configuration and workflow artifacts:
 - `terraform/main.tf`
 - `terraform/secrets.tf`
 - `terraform/serving.tf`
+- `terraform/app_serving.tf`
 - `docker-compose.yml`
 - `package.json`
 - `apps/web-frontend/package.json`
@@ -72,6 +143,7 @@ Required configuration and workflow artifacts:
 - `.github/workflows/model-monitoring.yml`
 - `.github/workflows/airflow-deploy.yml`
 - `.github/workflows/serving-deploy.yml`
+- `.github/workflows/ticketforge-app-serving-deploy.yml`
 - `scripts/ci/airflow_smoketest.sh`
 - `scripts/ci/backend_smoketest.sh`
 - `scripts/ci/deploy_serving.sh`
@@ -91,14 +163,49 @@ just gcp-backend-smoketest "<backend-url>" "<model-version>"
 just gcp-frontend-smoketest "<frontend-url>"
 ```
 
+Local app-serving reproducibility (container only):
+
+```bash
+# builds all three Cloud Run-oriented images locally
+just docker-build-apps
+
+# optional local run examples
+docker run --rm -p 8080:8080 ticketforge-api:local
+docker run --rm -p 8081:8080 ticketforge-inference:local
+docker run --rm -p 3000:8080 ticketforge-web:local
+```
+
+Cloud app-serving reproducibility (infra + deploy):
+
+```bash
+# CI/automation first model:
+# - CI validates buildability + Terraform validate/plan
+# - deploy workflow applies infra and rolls out services
+#
+# Manual fallback for bootstrap/debug only:
+terraform -chdir=terraform apply \
+  -var="enable_ticketforge_app_cloud_run=true" \
+  -var="ticketforge_api_container_image=<...>" \
+  -var="ticketforge_inference_container_image=<...>" \
+  -var="ticketforge_web_container_image=<...>"
+```
+
 `just verify-submission-ready` emits `PASS`, `WARN`, and `FAIL` lines so a clean
 submission check is easy to interpret on a fresh machine.
 
-`just gcp-serving-deploy` is the one-command serving rollout entrypoint. It
-dispatches the `Serving Deploy` GitHub Actions workflow against `main`, waits
-for completion by default, and lets GitHub Actions build, push, deploy, smoke
-test, and report the backend/frontend release through the existing Workload
-Identity Federation path.
+`just gcp-serving-deploy` remains the rollout entrypoint for the existing
+backend/frontend serving stack.
+
+`TicketForge App Serving Deploy` is the CI-driven rollout entrypoint for the
+app-serving stack (`ticketforge-api`, `ticketforge-inference`, `ticketforge-web`)
+and runs automatically after a successful `CI/CD` run on `main`.
+
+Deployment ownership model:
+- CI validates all required checks, including image buildability.
+- GitHub Actions deployment workflows are the primary production rollout path.
+- `ticketforge-app-serving-deploy.yml` is the canonical deploy automation for
+  `terraform/app_serving.tf`.
+- local `terraform apply` is a fallback path for bootstrap/recovery.
 
 Local retraining verification:
 
@@ -188,4 +295,10 @@ Each notification includes:
 - `Model Monitoring` succeeds and uploads drift + operations report artifacts
 - `Model CI/CD` succeeds and uploads gate + manifest + retraining operations artifacts
 - `reports/00_DATA_PIPELINE.md`, `reports/01_ML_PIPELINE.md`, and this report are committed
-- board issues `#104` to `#107` can link directly to the workflows and report artifacts above
+
+## 6. Deployment Verification Snapshot
+
+Most recent deployed service checks:
+- API: `https://ticketforge-api-r5ebf6yyyq-ue.a.run.app/health` -> `{"status":"ok"}`
+- inference: `https://ticketforge-inference-r5ebf6yyyq-ue.a.run.app/health` -> `{"status":"ok"}`
+- web: `https://ticketforge-web-r5ebf6yyyq-ue.a.run.app` -> `HTTP 200`

@@ -8,8 +8,30 @@ This module defines docker images for running the application.
 ├── airflow/            # Airflow image and first-start configuration scripts
 │   ├── Dockerfile      # Airflow container image with project configured
 │   └── entrypoint.sh   # DB initialization script
-└── base.Dockerfile     # Base docker image for any Python app in /apps
+├── base.Dockerfile     # Base docker image for any Python app in /apps
+├── frontend.Dockerfile # Next.js production (standalone) image
+└── inference.Dockerfile # Lightweight FastAPI inference stub for Cloud Run
 ```
+
+## Cloud Run images (TicketForge apps)
+
+From the **repo root**:
+
+```bash
+# FastAPI (uses base.Dockerfile Cloud Run stage, port 8080)
+docker build -f docker/base.Dockerfile --target cloudrun-web-backend \
+  --build-arg APP_NAME=web-backend -t ticketforge-api:local .
+
+# Inference stub (port 8080)
+docker build -f docker/inference.Dockerfile -t ticketforge-inference:local .
+
+# Next.js (port 8080; set API URL used at build time for public env vars)
+docker build -f docker/frontend.Dockerfile \
+  --build-arg NEXT_PUBLIC_API_URL=https://your-api-url.run.app \
+  -t ticketforge-web:local .
+```
+
+The same commands run in GitHub Actions (`docker-build-apps` job). Enable Terraform Cloud Run services with `enable_ticketforge_app_cloud_run` and image URIs in `terraform/terraform.tfvars.example`.
 
 ## Run Training Gates in Docker
 

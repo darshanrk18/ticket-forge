@@ -14,6 +14,9 @@ GMAIL_APP_PASSWORD=...               # Gmail app password (see https://support.g
 
 Add these to `.env` at the repo root.
 
+For Cloud Run wiring checks, this module also includes a lightweight inference
+HTTP stub at `training/inference_app.py` (used by `docker/inference.Dockerfile`).
+
 
 ## Structure
 

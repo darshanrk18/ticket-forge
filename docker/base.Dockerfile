@@ -61,3 +61,8 @@ COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 ENTRYPOINT ["python"]
+
+# Cloud Run / production HTTP entrypoint (use APP_NAME=web-backend when building).
+FROM runtime AS cloudrun-web-backend
+ENTRYPOINT []
+CMD ["uvicorn", "web_backend.main:app", "--host", "0.0.0.0", "--port", "8080"]

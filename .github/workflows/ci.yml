@@ -145,6 +145,40 @@ jobs:
         with:
           category: "/language:${{matrix.language}}"
 
+  docker-build-apps:
+    name: Check / Docker build (API, inference, web)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build TicketForge API image (Cloud Run)
+        run: |
+          docker build \
+            -f docker/base.Dockerfile \
+            --target cloudrun-web-backend \
+            --build-arg APP_NAME=web-backend \
+            -t ticketforge-api:ci \
+            .
+
+      - name: Build TicketForge inference image
+        run: |
+          docker build \
+            -f docker/inference.Dockerfile \
+            -t ticketforge-inference:ci \
+            .
+
+      - name: Build TicketForge web image
+        run: |
+          docker build \
+            -f docker/frontend.Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 \
+            -t ticketforge-web:ci \
+            .
+
   terraform-validate-plan:
     name: Check / TF Validate/Plan
     runs-on: ubuntu-latest
@@ -372,7 +406,7 @@ jobs:
   all-checks-good:
     name: Check / Finished
     needs:
-      [checks, model-eval, backend-eval, frontend-eval, analyze, terraform-validate-plan]
+      [checks, model-eval, backend-eval, frontend-eval, analyze, docker-build-apps, terraform-validate-plan]
     # This ensures it runs even if 'analyze' was skipped,
     # but still fails if any of them actually failed.
     if: |
@@ -382,6 +416,7 @@ jobs:
       needs.backend-eval.result == 'success' &&
       needs.frontend-eval.result == 'success' &&
       (needs.analyze.result == 'success' || needs.analyze.result == 'skipped') &&
+      needs.docker-build-apps.result == 'success' &&
       needs.terraform-validate-plan.result == 'success'
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,183 @@
+name: TicketForge App Serving Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI/CD"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: ticketforge-app-serving-deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_VAR_project_id: ${{ secrets.TF_VAR_PROJECT_ID || secrets.TF_VAR_project_id }}
+  TF_VAR_state_bucket: ${{ secrets.TF_VAR_STATE_BUCKET || secrets.TF_VAR_state_bucket }}
+  TF_VAR_region: ${{ secrets.TF_VAR_REGION || secrets.TF_VAR_region }}
+  TF_VAR_environment: prod
+  APP_IMAGE_REPOSITORY: ticketforge-apps
+
+jobs:
+  deploy:
+    name: Deploy / TicketForge app-serving stack
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve source ref
+        id: ref
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            head_sha="${{ github.event.workflow_run.head_sha }}"
+            echo "ref=${head_sha}" >> "$GITHUB_OUTPUT"
+            echo "short_sha=${head_sha::12}" >> "$GITHUB_OUTPUT"
+          else
+            if [[ "${{ github.ref_name }}" != "main" ]]; then
+              echo "Manual app-serving deploy is restricted to main" >&2
+              exit 1
+            fi
+            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "short_sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ID }}
+          service_account: tf-apply-sa@${{ env.TF_VAR_project_id }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.TF_VAR_project_id }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init -backend-config="bucket=${TF_VAR_state_bucket}"
+
+      - name: Ensure app image repository exists
+        run: |
+          set -euo pipefail
+          gcloud services enable artifactregistry.googleapis.com --project="${TF_VAR_project_id}"
+          if ! gcloud artifacts repositories describe "${APP_IMAGE_REPOSITORY}" \
+            --project="${TF_VAR_project_id}" \
+            --location="${TF_VAR_region}" >/dev/null 2>&1; then
+            gcloud artifacts repositories create "${APP_IMAGE_REPOSITORY}" \
+              --project="${TF_VAR_project_id}" \
+              --location="${TF_VAR_region}" \
+              --repository-format=docker \
+              --description="TicketForge app-serving images"
+          fi
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${TF_VAR_region}-docker.pkg.dev" --quiet
+
+      - name: Build and push app-serving images
+        id: images
+        env:
+          SHORT_SHA: ${{ steps.ref.outputs.short_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          base="${TF_VAR_region}-docker.pkg.dev/${TF_VAR_project_id}/${APP_IMAGE_REPOSITORY}"
+          tag="${SHORT_SHA}-${RUN_ID}-${RUN_ATTEMPT}"
+
+          api_image="${base}/ticketforge-api:${tag}"
+          inference_image="${base}/ticketforge-inference:${tag}"
+          web_image="${base}/ticketforge-web:${tag}"
+
+          docker build \
+            --platform linux/amd64 \
+            -f docker/base.Dockerfile \
+            --target cloudrun-web-backend \
+            --build-arg APP_NAME=web-backend \
+            -t "${api_image}" \
+            .
+          docker push "${api_image}"
+
+          docker build \
+            --platform linux/amd64 \
+            -f docker/inference.Dockerfile \
+            -t "${inference_image}" \
+            .
+          docker push "${inference_image}"
+
+          docker build \
+            --platform linux/amd64 \
+            -f docker/frontend.Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 \
+            -t "${web_image}" \
+            .
+          docker push "${web_image}"
+
+          echo "api_image=${api_image}" >> "$GITHUB_OUTPUT"
+          echo "inference_image=${inference_image}" >> "$GITHUB_OUTPUT"
+          echo "web_image=${web_image}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply app-serving Terraform stack
+        env:
+          API_IMAGE: ${{ steps.images.outputs.api_image }}
+          INFERENCE_IMAGE: ${{ steps.images.outputs.inference_image }}
+          WEB_IMAGE: ${{ steps.images.outputs.web_image }}
+        run: |
+          terraform -chdir=terraform apply -auto-approve \
+            -target=google_cloud_run_v2_service.ticketforge_api \
+            -target=google_cloud_run_v2_service.ticketforge_inference \
+            -target=google_cloud_run_v2_service.ticketforge_web \
+            -target=google_cloud_run_v2_service_iam_member.ticketforge_api_public_invoker \
+            -target=google_cloud_run_v2_service_iam_member.ticketforge_inference_public_invoker \
+            -target=google_cloud_run_v2_service_iam_member.ticketforge_web_public_invoker \
+            -target=google_service_account.ticketforge_api \
+            -target=google_service_account.ticketforge_inference \
+            -target=google_service_account.ticketforge_web \
+            -target=google_secret_manager_secret.ticketforge_api_database_url \
+            -target=google_secret_manager_secret_version.ticketforge_api_database_url \
+            -target=google_secret_manager_secret.ticketforge_api_jwt \
+            -target=google_secret_manager_secret_version.ticketforge_api_jwt \
+            -target=google_secret_manager_secret_iam_member.ticketforge_api_dburl_accessor \
+            -target=google_secret_manager_secret_iam_member.ticketforge_api_jwt_accessor \
+            -target=google_project_iam_member.ticketforge_api_cloudsql \
+            -var="project_id=${TF_VAR_project_id}" \
+            -var="state_bucket=${TF_VAR_state_bucket}" \
+            -var="region=${TF_VAR_region}" \
+            -var="environment=${TF_VAR_environment}" \
+            -var="enable_ticketforge_app_cloud_run=true" \
+            -var="ticketforge_api_container_image=${API_IMAGE}" \
+            -var="ticketforge_inference_container_image=${INFERENCE_IMAGE}" \
+            -var="ticketforge_web_container_image=${WEB_IMAGE}"
+
+      - name: Resolve deployed URLs
+        id: urls
+        run: |
+          echo "api_uri=$(terraform -chdir=terraform output -raw ticketforge_api_uri)" >> "$GITHUB_OUTPUT"
+          echo "inference_uri=$(terraform -chdir=terraform output -raw ticketforge_inference_uri)" >> "$GITHUB_OUTPUT"
+          echo "web_uri=$(terraform -chdir=terraform output -raw ticketforge_web_uri)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test app-serving endpoints
+        env:
+          API_URI: ${{ steps.urls.outputs.api_uri }}
+          INFERENCE_URI: ${{ steps.urls.outputs.inference_uri }}
+          WEB_URI: ${{ steps.urls.outputs.web_uri }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "${API_URI}/health" >/dev/null
+          curl -fsSL "${INFERENCE_URI}/health" >/dev/null
+          curl -fsSL "${WEB_URI}" >/dev/null
