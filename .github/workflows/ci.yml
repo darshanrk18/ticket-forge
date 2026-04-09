@@ -243,27 +243,19 @@ jobs:
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --format=json 2>/dev/null || true)"
-          ticketforge_api_json="$(gcloud run services describe ticketforge-api \
-            --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --format=json 2>/dev/null || true)"
-          ticketforge_inference_json="$(gcloud run services describe ticketforge-inference \
-            --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --format=json 2>/dev/null || true)"
-          ticketforge_web_json="$(gcloud run services describe ticketforge-web \
-            --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --format=json 2>/dev/null || true)"
+          ticketforge_api_state="$(terraform -chdir=terraform state show -no-color 'google_cloud_run_v2_service.ticketforge_api[0]' 2>/dev/null || true)"
+          ticketforge_inference_state="$(terraform -chdir=terraform state show -no-color 'google_cloud_run_v2_service.ticketforge_inference[0]' 2>/dev/null || true)"
+          ticketforge_web_state="$(terraform -chdir=terraform state show -no-color 'google_cloud_run_v2_service.ticketforge_web[0]' 2>/dev/null || true)"
 
           BACKEND_JSON="${backend_json}" \
           FRONTEND_JSON="${frontend_json}" \
-          TICKETFORGE_API_JSON="${ticketforge_api_json}" \
-          TICKETFORGE_INFERENCE_JSON="${ticketforge_inference_json}" \
-          TICKETFORGE_WEB_JSON="${ticketforge_web_json}" \
+          TICKETFORGE_API_STATE="${ticketforge_api_state}" \
+          TICKETFORGE_INFERENCE_STATE="${ticketforge_inference_state}" \
+          TICKETFORGE_WEB_STATE="${ticketforge_web_state}" \
           python3 - <<'PY'
           import json
           import os
+          import re
           from pathlib import Path
 
           output_path = Path(os.environ["GITHUB_OUTPUT"])
@@ -301,15 +293,19 @@ jobs:
 
           backend = parse_service(os.environ.get("BACKEND_JSON", ""))
           frontend = parse_service(os.environ.get("FRONTEND_JSON", ""))
-          ticketforge_api = parse_service(os.environ.get("TICKETFORGE_API_JSON", ""))
-          ticketforge_inference = parse_service(os.environ.get("TICKETFORGE_INFERENCE_JSON", ""))
-          ticketforge_web = parse_service(os.environ.get("TICKETFORGE_WEB_JSON", ""))
+          def image_from_state(raw: str) -> str:
+              match = re.search(r'^\s*image\s*=\s*"([^"]+)"\s*$', raw, flags=re.MULTILINE)
+              return match.group(1) if match else ""
+
+          ticketforge_api_image = image_from_state(os.environ.get("TICKETFORGE_API_STATE", ""))
+          ticketforge_inference_image = image_from_state(os.environ.get("TICKETFORGE_INFERENCE_STATE", ""))
+          ticketforge_web_image = image_from_state(os.environ.get("TICKETFORGE_WEB_STATE", ""))
 
           app_enabled = all(
               [
-                  bool(image(ticketforge_api)),
-                  bool(image(ticketforge_inference)),
-                  bool(image(ticketforge_web)),
+                  bool(ticketforge_api_image),
+                  bool(ticketforge_inference_image),
+                  bool(ticketforge_web_image),
               ]
           )
 
@@ -320,9 +316,9 @@ jobs:
               f"frontend_image={image(frontend)}",
               f"frontend_api_url={env_value(frontend, 'NEXT_PUBLIC_API_URL')}",
               f"ticketforge_app_enabled={'true' if app_enabled else 'false'}",
-              f"ticketforge_api_image={image(ticketforge_api)}",
-              f"ticketforge_inference_image={image(ticketforge_inference)}",
-              f"ticketforge_web_image={image(ticketforge_web)}",
+              f"ticketforge_api_image={ticketforge_api_image}",
+              f"ticketforge_inference_image={ticketforge_inference_image}",
+              f"ticketforge_web_image={ticketforge_web_image}",
           ]
           with output_path.open("a", encoding="utf-8") as fh:
               for line in lines:
