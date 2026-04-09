@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 from ml_core.embeddings import EmbeddingService, get_embedding_service
+from ml_core.embeddings.service import _resolve_model_source
 
 
 class TestEmbeddingService:
@@ -92,3 +93,42 @@ class TestEmbeddingService:
     service2 = get_embedding_service()
 
     assert service1 is service2
+
+  def test_prefers_bundled_model_path(
+    self, monkeypatch: pytest.MonkeyPatch, tmp_path
+  ) -> None:
+    """Bundled model path should be used offline when configured."""
+    bundled_model = tmp_path / "all-MiniLM-L6-v2"
+    bundled_model.mkdir()
+
+    captured: dict[str, object] = {}
+
+    class FakeSentenceTransformer:
+      def __init__(
+        self,
+        model_name: str,
+        *,
+        device: str | None = None,
+        local_files_only: bool = False,
+      ) -> None:
+        captured["model_name"] = model_name
+        captured["device"] = device
+        captured["local_files_only"] = local_files_only
+
+      def get_sentence_embedding_dimension(self) -> int:
+        return 384
+
+    monkeypatch.setenv("MLCORE_EMBEDDING_MODEL_PATH", str(bundled_model))
+    monkeypatch.setattr(
+      "ml_core.embeddings.service.SentenceTransformer",
+      FakeSentenceTransformer,
+    )
+
+    model_source, local_only = _resolve_model_source("all-MiniLM-L6-v2")
+    assert model_source == str(bundled_model)
+    assert local_only is True
+
+    service = EmbeddingService()
+    assert service.embedding_dim == 384
+    assert captured["model_name"] == str(bundled_model)
+    assert captured["local_files_only"] is True

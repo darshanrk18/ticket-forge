@@ -1,6 +1,8 @@
 """Embedding service for converting text to semantic vectors."""
 
 import logging
+import os
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -11,6 +13,16 @@ logger = logging.getLogger(__name__)
 # Error messages
 EMPTY_TEXT_ERROR = "Text cannot be empty"
 EMPTY_LIST_ERROR = "Texts list cannot be empty"
+DEFAULT_MODEL_BUNDLE_PATH = "/opt/models/all-MiniLM-L6-v2"
+
+
+def _resolve_model_source(model_name: str) -> tuple[str, bool]:
+  """Prefer a bundled local model copy when available."""
+  configured_path = os.environ.get("MLCORE_EMBEDDING_MODEL_PATH", "").strip()
+  candidate = Path(configured_path or DEFAULT_MODEL_BUNDLE_PATH)
+  if candidate.exists():
+    return str(candidate), True
+  return model_name, False
 
 
 class EmbeddingService:
@@ -33,9 +45,18 @@ class EmbeddingService:
         model_name: Name of the sentence-transformer model to use
         device: Device to run model on ('cuda', 'cpu', or None)
     """
-    logger.info(f"Loading embedding model: {model_name}")
+    model_source, local_files_only = _resolve_model_source(model_name)
+    logger.info(
+      "Loading embedding model source=%s local_files_only=%s",
+      model_source,
+      local_files_only,
+    )
     self.model_name = model_name
-    self.model = SentenceTransformer(model_name, device=device)
+    self.model = SentenceTransformer(
+      model_source,
+      device=device,
+      local_files_only=local_files_only,
+    )
     dim = self.model.get_sentence_embedding_dimension()
     if dim is None:
       msg = "Model returned None for embedding dimension"

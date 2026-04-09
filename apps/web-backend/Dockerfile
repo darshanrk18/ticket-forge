@@ -25,14 +25,28 @@ COPY libs/ ./libs/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable --package web-backend
 
+RUN --mount=type=cache,target=/root/.cache/huggingface \
+    HF_HOME=/root/.cache/huggingface \
+    /app/.venv/bin/python - <<'PY'
+from pathlib import Path
+
+from sentence_transformers import SentenceTransformer
+
+target = Path("/opt/models/all-MiniLM-L6-v2")
+target.parent.mkdir(parents=True, exist_ok=True)
+SentenceTransformer("all-MiniLM-L6-v2").save(str(target))
+PY
+
 
 FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /opt/models /opt/models
 
 ENV PATH="/app/.venv/bin:$PATH" \
+    MLCORE_EMBEDDING_MODEL_PATH=/opt/models/all-MiniLM-L6-v2 \
     PORT=8080
 
 EXPOSE 8080
