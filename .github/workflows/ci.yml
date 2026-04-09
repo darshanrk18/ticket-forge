@@ -365,8 +365,15 @@ jobs:
           plan = json.loads(Path("plan.json").read_text(encoding="utf-8"))
           problems = []
           ticketforge_app_enabled = os.environ.get("TICKETFORGE_APP_ENABLED", "false").lower() == "true"
+          resource_changes = plan.get("resource_changes", [])
+          has_ticketforge_app_changes = any(
+              rc.get("address", "").startswith("google_cloud_run_v2_service.ticketforge_")
+              and rc.get("change", {}).get("actions", []) != ["no-op"]
+              for rc in resource_changes
+          )
+          effective_app_mode = ticketforge_app_enabled or has_ticketforge_app_changes
 
-          for resource_change in plan.get("resource_changes", []):
+          for resource_change in resource_changes:
               address = resource_change.get("address", "")
               change = resource_change.get("change", {})
               actions = change.get("actions", [])
@@ -376,7 +383,7 @@ jobs:
                   problems.append(f"{address}: destructive actions {actions}")
 
               if address == "google_cloud_run_v2_service.web_backend":
-                  if ticketforge_app_enabled:
+                  if effective_app_mode:
                       continue
                   containers = (
                       after.get("template", [{}])[0]
@@ -389,7 +396,7 @@ jobs:
                       )
 
               if address == "google_cloud_run_v2_service.web_frontend":
-                  if ticketforge_app_enabled:
+                  if effective_app_mode:
                       continue
                   containers = (
                       after.get("template", [{}])[0]
