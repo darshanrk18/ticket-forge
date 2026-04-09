@@ -1,9 +1,17 @@
 name: Airflow Deploy
 
 on:
+  push:
+    branches: ["main"]
+    paths:
+      - "dags/**"
+      - "apps/training/**"
+      - "apps/pipelines/**"
+      - "libs/**"
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -16,7 +24,67 @@ env:
   TF_VAR_environment: prod
 
 jobs:
+  wait-for-ci:
+    name: Deploy / Wait For CI Gate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CI/CD on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          run_id=""
+          for _ in $(seq 1 30); do
+            runs_json="$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow "CI/CD" \
+              --branch "main" \
+              --event "push" \
+              --limit 20 \
+              --json databaseId,headSha,status,conclusion)"
+            run_id="$(RUNS_JSON="${runs_json}" SOURCE_SHA="${SOURCE_SHA}" python3 -c 'import json, os; runs = json.loads(os.environ["RUNS_JSON"]); print(next((str(run.get("databaseId", "")) for run in runs if run.get("headSha") == os.environ["SOURCE_SHA"]), ""))')"
+            if [[ -n "${run_id}" ]]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ -z "${run_id}" ]]; then
+            echo "Could not find CI/CD workflow run for ${SOURCE_SHA}" >&2
+            exit 1
+          fi
+
+          for _ in $(seq 1 90); do
+            jobs_json="$(gh run view "${run_id}" --repo "${{ github.repository }}" --json jobs)"
+            gate_result="$(
+              JOBS_JSON="${jobs_json}" python3 -c 'import json, os; jobs = json.loads(os.environ["JOBS_JSON"]).get("jobs", []); gate = next((job for job in jobs if job.get("name") == "Check / Finished"), None); print("missing" if gate is None else "pending" if gate.get("status") != "completed" else (gate.get("conclusion") or "unknown"))'
+            )"
+
+            case "${gate_result}" in
+              success)
+                exit 0
+                ;;
+              pending|missing)
+                sleep 10
+                ;;
+              *)
+                echo "CI/CD test gate concluded with status ${gate_result}" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Timed out waiting for CI/CD test gate on ${SOURCE_SHA}" >&2
+          exit 1
+
   deploy:
+    needs: [wait-for-ci]
+    if: >-
+      needs.wait-for-ci.result == 'success' ||
+      needs.wait-for-ci.result == 'skipped'
     runs-on: ubuntu-latest
 
     steps:
@@ -30,14 +98,18 @@ jobs:
         id: repo_ref
         env:
           EVENT_NAME: ${{ github.event_name }}
-          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
           REF_NAME: ${{ github.ref_name }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          repo_ref="${REF_NAME}"
           commit_sha="${COMMIT_SHA}"
+
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            repo_ref="${commit_sha}"
+          else
+            repo_ref="${REF_NAME}"
+          fi
 
           if [[ -z "${repo_ref}" ]]; then
             repo_ref="${commit_sha}"
@@ -198,7 +270,7 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
           EVENT_NAME: ${{ github.event_name }}
-          TRIGGER_REASON: manual-dispatch
+          TRIGGER_REASON: ${{ github.event_name == 'push' && 'push-main' || 'manual-dispatch' }}
           WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_SHA: ${{ steps.repo_ref.outputs.commit_sha }}
           SOURCE_REF: ${{ steps.repo_ref.outputs.value }}

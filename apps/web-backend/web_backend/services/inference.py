@@ -16,6 +16,7 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 from ml_core.embeddings import get_embedding_service
+from ml_core.features import REPO_FEATURE_ORDER, TOP_50_LABELS
 from ml_core.keywords import get_keyword_extractor
 from mlflow.tracking import MlflowClient
 from sqlalchemy import select
@@ -39,11 +40,6 @@ _SIZE_BUCKET_LABELS: dict[int, str] = {
     2: "L",
     3: "XL",
 }
-_REPO_FEATURE_ORDER = (
-    "ansible/ansible",
-    "hashicorp/terraform",
-    "prometheus/prometheus",
-)
 _CODE_BLOCK_RE = re.compile(r"```(.*?)```", re.DOTALL)
 _INLINE_CODE_RE = re.compile(r"`([^`]*)`")
 _MAX_TTA_HOURS = 720.0
@@ -202,10 +198,12 @@ def _build_feature_vector(
     embedding = _embed_text(normalized_text).astype(np.float32)
 
     repo = (payload.repo or "").strip()
-    labels = [label.strip().lower() for label in payload.labels if label.strip()]
+    labels = [label.strip() for label in payload.labels if label.strip()]
+    ticket_labels = set(labels)
     repo_one_hot = [
-        1.0 if repo == repo_name else 0.0 for repo_name in _REPO_FEATURE_ORDER
+        1.0 if repo == repo_name else 0.0 for repo_name in REPO_FEATURE_ORDER
     ]
+    label_one_hot = [1.0 if label in ticket_labels else 0.0 for label in TOP_50_LABELS]
     title_length = len(payload.title or "")
     body_length = len(payload.body or "")
     keyword_count = len(keywords)
@@ -215,10 +213,8 @@ def _build_feature_vector(
 
     engineered_features = np.array(
         repo_one_hot
+        + label_one_hot
         + [
-            1.0 if "bug" in labels else 0.0,
-            1.0 if "enhancement" in labels else 0.0,
-            1.0 if "crash" in labels else 0.0,
             float(payload.comments_count),
             float(payload.historical_avg_completion_hours),
             float(keyword_count),

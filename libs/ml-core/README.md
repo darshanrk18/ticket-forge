@@ -20,6 +20,8 @@ ml_core/
 │   └── validator.py   # SchemaValidator - schema enforcement
 ├── embeddings/        # Vector generation
 │   └── service.py     # SentenceTransformer singleton (all-MiniLM-L6-v2)
+├── features/          # Shared feature schema constants
+│   └── schema.py      # Repo/label ordering + feature dimensions
 ├── keywords/          # Skill extraction
 │   └── extractor.py   # KeywordExtractor - pattern matching
 └── profiles/          # Engineer profiles
@@ -49,6 +51,18 @@ from ml_core.keywords import get_keyword_extractor
 
 extractor = get_keyword_extractor()
 skills = extractor.extract("Python Django REST API")  # returns list of keywords
+```
+
+### Feature Schema (`features/`)
+
+Single source of truth for training/serving feature ordering to prevent drift.
+
+```python
+from ml_core.features import REPO_FEATURE_ORDER, TOP_50_LABELS, TOTAL_FEATURE_DIM
+
+assert len(REPO_FEATURE_ORDER) == 3
+assert len(TOP_50_LABELS) == 50
+assert TOTAL_FEATURE_DIM == 443
 ```
 
 ### Profiles (`profiles/`)

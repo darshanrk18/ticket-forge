@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+from ml_core.features import TOTAL_FEATURE_DIM
 from sqlalchemy import select
 
 from web_backend.models.inference import InferenceEvent
@@ -18,7 +19,7 @@ class _FakeEstimator:
     classes_ = np.array([0, 1, 2, 3])
 
     def predict(self, features: np.ndarray) -> np.ndarray:
-        assert features.shape == (1, 396)
+        assert features.shape == (1, TOTAL_FEATURE_DIM)
         return np.array([2])
 
     def predict_proba(self, _features: np.ndarray) -> np.ndarray:
@@ -50,7 +51,7 @@ def test_build_feature_vector_matches_training_shape() -> None:
     ):
         features, summary = _build_feature_vector(payload=SimpleNamespace(**payload))
 
-    assert features.shape == (1, 396)
+    assert features.shape == (1, TOTAL_FEATURE_DIM)
     assert summary.repo == "hashicorp/terraform"
     assert summary.keyword_count == 2
     assert summary.time_to_assignment_hours == 3.0

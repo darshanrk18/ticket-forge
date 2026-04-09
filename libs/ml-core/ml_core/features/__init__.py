@@ -1,0 +1,19 @@
+"""Shared feature schema constants for training and serving."""
+
+from ml_core.features.schema import (
+  EMBEDDING_FEATURE_DIM,
+  ENGINEERED_FEATURE_DIM,
+  NUMERIC_ENGINEERED_FEATURE_DIM,
+  REPO_FEATURE_ORDER,
+  TOP_50_LABELS,
+  TOTAL_FEATURE_DIM,
+)
+
+__all__ = [
+  "EMBEDDING_FEATURE_DIM",
+  "ENGINEERED_FEATURE_DIM",
+  "NUMERIC_ENGINEERED_FEATURE_DIM",
+  "REPO_FEATURE_ORDER",
+  "TOP_50_LABELS",
+  "TOTAL_FEATURE_DIM",
+]

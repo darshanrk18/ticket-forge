@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from ml_core.features import REPO_FEATURE_ORDER, TOP_50_LABELS
 from pydantic import BaseModel
 from shared.configuration import (
   RANDOM_SEED,
@@ -49,60 +50,6 @@ _DATASET_FILE_CANDIDATES = (
   "tickets_transformed_improved.jsonl",
   "tickets_transformed_improved.jsonl.gz",
 )
-
-# Top 50 most common labels for one-hot encoding (from label frequency analysis)
-_TOP_50_LABELS = [
-  "bug",
-  "module",
-  "support:core",
-  "support:community",
-  "feature",
-  "enhancement",
-  "provider/aws",
-  "cloud",
-  "has_pr",
-  "new",
-  "python3",
-  "needs_info",
-  "affects_2.9",
-  "affects_2.4",
-  "affects_2.3",
-  "collection",
-  "affects_2.8",
-  "traceback",
-  "networking",
-  "bot_closed",
-  "affects_2.5",
-  "needs_collection_redirect",
-  "core",
-  "affects_2.7",
-  "docs",
-  "affects_2.2",
-  "question",
-  "affects_2.10",
-  "windows",
-  "affects_2.6",
-  "aws",
-  "cisco",
-  "needs_template",
-  "config",
-  "P3",
-  "P2",
-  "cli",
-  "affects_2.1",
-  "waiting-response",
-  "support:network",
-  "crash",
-  "collection:community.general",
-  "provider/azurerm",
-  "vmware",
-  "system",
-  "kind/bug",
-  "affects_2.11",
-  "documentation",
-  "priority/P3",
-  "packaging",
-]
 
 
 def _parse_tta(created: str | None, assigned: str | None) -> float:
@@ -544,18 +491,15 @@ class Dataset(BaseModel):
     embeddings = np.array([r["embedding"] for r in records], dtype=np.float32)
 
     # --- Engineered features (59-dim) ---
-    repos = ["ansible/ansible", "hashicorp/terraform", "prometheus/prometheus"]
     engineered = []
     for r in records:
       repo = r.get("repo", "")
-      repo_onehot = [1.0 if repo == R else 0.0 for R in repos]
+      repo_onehot = [1.0 if repo == R else 0.0 for R in REPO_FEATURE_ORDER]
 
       # Parse ticket labels and create one-hot encoding for top 50 labels
       labels_str = r.get("labels", "") or ""
       ticket_labels = {lbl.strip() for lbl in labels_str.split(",") if lbl.strip()}
-      label_onehot = [
-        1.0 if label in ticket_labels else 0.0 for label in _TOP_50_LABELS
-      ]
+      label_onehot = [1.0 if label in ticket_labels else 0.0 for label in TOP_50_LABELS]
 
       comments = float(r.get("comments_count") or 0)
       hist_avg = float(r.get("historical_avg_completion_hours") or 0)
