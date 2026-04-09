@@ -106,6 +106,15 @@ gcp-get-wif-provider:
 get-repo-id repo='alearningcurve/ticket-forge':
     @gh api -H "Accept: application/vnd.github+json" repos/{{ repo }} | jq .id
 
+# Build Cloud Run-oriented images locally (matches CI docker-build-apps job)
+[group('ops')]
+docker-build-apps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker build -f docker/base.Dockerfile --target cloudrun-web-backend --build-arg APP_NAME=web-backend -t ticketforge-api:local .
+    docker build -f docker/inference.Dockerfile -t ticketforge-inference:local .
+    docker build -f docker/frontend.Dockerfile --build-arg NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 -t ticketforge-web:local .
+
 [group('ops')]
 tf-build-push-mlflow-image repo='mlflow-repo' tag='v3.10.0':
     @: "${TF_VAR_project_id:?TF_VAR_project_id must be set in .env}"

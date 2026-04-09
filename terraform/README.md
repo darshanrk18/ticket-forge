@@ -9,6 +9,16 @@ This folder manages ticket-forge infrastructure on GCP, including:
 - Airflow runtime on Compute Engine VM with IAP/internal-only web access.
 - Cloud Storage training artifacts bucket with `index.json` dataset pointer.
 
+This stack also supports an **optional** app-serving path in `app_serving.tf`:
+- `ticketforge-api` (FastAPI)
+- `ticketforge-inference` (inference stub)
+- `ticketforge-web` (Next.js)
+Enable with `enable_ticketforge_app_cloud_run = true` and three `ticketforge_*_container_image` values.
+
+The legacy serving resources in `serving.tf` (`web_backend` / `web_frontend`)
+remain available for compatibility with existing deployment flows. For issue 103
+validation, use the optional `ticketforge_*` app-serving resources above.
+
 ## Airflow + Cloud Storage resources
 
 This feature provisions a hosted Airflow runtime and cloud dataset storage:

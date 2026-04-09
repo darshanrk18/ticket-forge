@@ -148,6 +148,40 @@ jobs:
         with:
           category: "/language:${{matrix.language}}"
 
+  docker-build-apps:
+    name: Check / Docker build (API, inference, web)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build TicketForge API image (Cloud Run)
+        run: |
+          docker build \
+            -f docker/base.Dockerfile \
+            --target cloudrun-web-backend \
+            --build-arg APP_NAME=web-backend \
+            -t ticketforge-api:ci \
+            .
+
+      - name: Build TicketForge inference image
+        run: |
+          docker build \
+            -f docker/inference.Dockerfile \
+            -t ticketforge-inference:ci \
+            .
+
+      - name: Build TicketForge web image
+        run: |
+          docker build \
+            -f docker/frontend.Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 \
+            -t ticketforge-web:ci \
+            .
+
   terraform-validate-plan:
     name: Check / TF Validate/Plan
     runs-on: ubuntu-latest
@@ -204,56 +238,64 @@ jobs:
         run: |
           set -euo pipefail
 
-          backend_json="$(gcloud run services describe ticketforge-backend \
-            --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --format=json 2>/dev/null || true)"
-          frontend_json="$(gcloud run services describe ticketforge-frontend \
-            --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --format=json 2>/dev/null || true)"
+          backend_state="$(terraform -chdir=terraform state show -no-color 'google_cloud_run_v2_service.web_backend' 2>/dev/null || true)"
+          frontend_state="$(terraform -chdir=terraform state show -no-color 'google_cloud_run_v2_service.web_frontend' 2>/dev/null || true)"
+          ticketforge_api_state="$(terraform -chdir=terraform state show -no-color 'google_cloud_run_v2_service.ticketforge_api[0]' 2>/dev/null || true)"
+          ticketforge_inference_state="$(terraform -chdir=terraform state show -no-color 'google_cloud_run_v2_service.ticketforge_inference[0]' 2>/dev/null || true)"
+          ticketforge_web_state="$(terraform -chdir=terraform state show -no-color 'google_cloud_run_v2_service.ticketforge_web[0]' 2>/dev/null || true)"
 
-          BACKEND_JSON="${backend_json}" FRONTEND_JSON="${frontend_json}" python3 - <<'PY'
-          import json
+          BACKEND_STATE="${backend_state}" \
+          FRONTEND_STATE="${frontend_state}" \
+          TICKETFORGE_API_STATE="${ticketforge_api_state}" \
+          TICKETFORGE_INFERENCE_STATE="${ticketforge_inference_state}" \
+          TICKETFORGE_WEB_STATE="${ticketforge_web_state}" \
+          python3 - <<'PY'
           import os
+          import re
           from pathlib import Path
 
           output_path = Path(os.environ["GITHUB_OUTPUT"])
 
-          def parse_service(raw: str) -> dict:
-              if not raw.strip():
-                  return {}
-              return json.loads(raw)
+          def image_from_state(raw: str) -> str:
+              match = re.search(r'^\s*image\s*=\s*"([^"]+)"\s*$', raw, flags=re.MULTILINE)
+              return match.group(1) if match else ""
 
-          def image(service: dict) -> str:
-              return (
-                  service.get("spec", {})
-                  .get("template", {})
-                  .get("containers", [{}])[0]
-                  .get("image", "")
-              )
-
-          def env_value(service: dict, name: str) -> str:
-              envs = (
-                  service.get("spec", {})
-                  .get("template", {})
-                  .get("containers", [{}])[0]
-                  .get("env", [])
-              )
-              for item in envs:
-                  if item.get("name") == name:
-                      return item.get("value", "")
+          def env_from_state(raw: str, name: str) -> str:
+              lines = raw.splitlines()
+              for idx, line in enumerate(lines):
+                  if re.match(r'^\s*name\s*=\s*"' + re.escape(name) + r'"\s*$', line):
+                      for probe in lines[idx + 1: idx + 8]:
+                          value_match = re.match(r'^\s*value\s*=\s*"([^"]*)"\s*$', probe)
+                          if value_match:
+                              return value_match.group(1)
               return ""
 
-          backend = parse_service(os.environ.get("BACKEND_JSON", ""))
-          frontend = parse_service(os.environ.get("FRONTEND_JSON", ""))
+          backend_image = image_from_state(os.environ.get("BACKEND_STATE", ""))
+          frontend_image = image_from_state(os.environ.get("FRONTEND_STATE", ""))
+          frontend_api_url = env_from_state(os.environ.get("FRONTEND_STATE", ""), "NEXT_PUBLIC_API_URL")
+
+          ticketforge_api_image = image_from_state(os.environ.get("TICKETFORGE_API_STATE", ""))
+          ticketforge_inference_image = image_from_state(os.environ.get("TICKETFORGE_INFERENCE_STATE", ""))
+          ticketforge_web_image = image_from_state(os.environ.get("TICKETFORGE_WEB_STATE", ""))
+
+          app_enabled = all(
+              [
+                  bool(ticketforge_api_image),
+                  bool(ticketforge_inference_image),
+                  bool(ticketforge_web_image),
+              ]
+          )
 
           lines = [
-              f"backend_image={image(backend)}",
-              f"backend_cors_origins={env_value(backend, 'CORS_ORIGINS')}",
-              f"backend_serving_model_version={env_value(backend, 'SERVING_MODEL_VERSION')}",
-              f"frontend_image={image(frontend)}",
-              f"frontend_api_url={env_value(frontend, 'NEXT_PUBLIC_API_URL')}",
+              f"backend_image={backend_image}",
+              "backend_cors_origins=",
+              "backend_serving_model_version=",
+              f"frontend_image={frontend_image}",
+              f"frontend_api_url={frontend_api_url}",
+              f"ticketforge_app_enabled={'true' if app_enabled else 'false'}",
+              f"ticketforge_api_image={ticketforge_api_image}",
+              f"ticketforge_inference_image={ticketforge_inference_image}",
+              f"ticketforge_web_image={ticketforge_web_image}",
           ]
           with output_path.open("a", encoding="utf-8") as fh:
               for line in lines:
@@ -273,6 +315,10 @@ jobs:
           BACKEND_SERVING_MODEL_VERSION: ${{ steps.serving-current.outputs.backend_serving_model_version }}
           FRONTEND_IMAGE: ${{ steps.serving-current.outputs.frontend_image }}
           FRONTEND_API_URL: ${{ steps.serving-current.outputs.frontend_api_url }}
+          TICKETFORGE_APP_ENABLED: ${{ steps.serving-current.outputs.ticketforge_app_enabled }}
+          TICKETFORGE_API_IMAGE: ${{ steps.serving-current.outputs.ticketforge_api_image }}
+          TICKETFORGE_INFERENCE_IMAGE: ${{ steps.serving-current.outputs.ticketforge_inference_image }}
+          TICKETFORGE_WEB_IMAGE: ${{ steps.serving-current.outputs.ticketforge_web_image }}
         run: |
           set -o pipefail
           args=(
@@ -296,24 +342,47 @@ jobs:
           if [[ -n "${FRONTEND_API_URL}" ]]; then
             args+=("-var=web_frontend_api_url=${FRONTEND_API_URL}")
           fi
+          if [[ "${TICKETFORGE_APP_ENABLED}" == "true" ]]; then
+            args+=("-var=enable_ticketforge_app_cloud_run=true")
+            args+=("-var=ticketforge_api_container_image=${TICKETFORGE_API_IMAGE}")
+            args+=("-var=ticketforge_inference_container_image=${TICKETFORGE_INFERENCE_IMAGE}")
+            args+=("-var=ticketforge_web_container_image=${TICKETFORGE_WEB_IMAGE}")
+          fi
 
           terraform plan "${args[@]}" | tee plan.txt
 
       - name: Terraform Plan Safety Gate
         if: steps.filter.outputs.terraform == 'true'
         working-directory: terraform
+        env:
+          TICKETFORGE_APP_ENABLED: ${{ steps.serving-current.outputs.ticketforge_app_enabled }}
+          BACKEND_IMAGE: ${{ steps.serving-current.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.serving-current.outputs.frontend_image }}
+          FRONTEND_API_URL: ${{ steps.serving-current.outputs.frontend_api_url }}
         run: |
           terraform show -json tfplan > plan.json
 
           python3 - <<'PY'
           import json
+          import os
           import sys
           from pathlib import Path
 
           plan = json.loads(Path("plan.json").read_text(encoding="utf-8"))
           problems = []
+          ticketforge_app_enabled = os.environ.get("TICKETFORGE_APP_ENABLED", "false").lower() == "true"
+          resource_changes = plan.get("resource_changes", [])
+          has_ticketforge_app_resources = any(
+              rc.get("address", "").startswith("google_cloud_run_v2_service.ticketforge_")
+              for rc in resource_changes
+          )
+          effective_app_mode = ticketforge_app_enabled or has_ticketforge_app_resources
+          enforce_legacy_serving_checks = any(
+              bool(os.environ.get(name, "").strip())
+              for name in ("BACKEND_IMAGE", "FRONTEND_IMAGE", "FRONTEND_API_URL")
+          )
 
-          for resource_change in plan.get("resource_changes", []):
+          for resource_change in resource_changes:
               address = resource_change.get("address", "")
               change = resource_change.get("change", {})
               actions = change.get("actions", [])
@@ -323,6 +392,8 @@ jobs:
                   problems.append(f"{address}: destructive actions {actions}")
 
               if address == "google_cloud_run_v2_service.web_backend":
+                  if effective_app_mode or not enforce_legacy_serving_checks:
+                      continue
                   containers = (
                       after.get("template", [{}])[0]
                       .get("containers", [{}])
@@ -334,6 +405,8 @@ jobs:
                       )
 
               if address == "google_cloud_run_v2_service.web_frontend":
+                  if effective_app_mode or not enforce_legacy_serving_checks:
+                      continue
                   containers = (
                       after.get("template", [{}])[0]
                       .get("containers", [{}])
@@ -351,6 +424,39 @@ jobs:
                   if not envs.get("NEXT_PUBLIC_API_URL"):
                       problems.append(
                           f"{address}: NEXT_PUBLIC_API_URL would be empty"
+                      )
+
+              if address == "google_cloud_run_v2_service.ticketforge_api[0]":
+                  containers = (
+                      after.get("template", [{}])[0]
+                      .get("containers", [{}])
+                  )
+                  image = containers[0].get("image", "")
+                  if not image:
+                      problems.append(
+                          f"{address}: ticketforge api image would be empty"
+                      )
+
+              if address == "google_cloud_run_v2_service.ticketforge_inference[0]":
+                  containers = (
+                      after.get("template", [{}])[0]
+                      .get("containers", [{}])
+                  )
+                  image = containers[0].get("image", "")
+                  if not image:
+                      problems.append(
+                          f"{address}: ticketforge inference image would be empty"
+                      )
+
+              if address == "google_cloud_run_v2_service.ticketforge_web[0]":
+                  containers = (
+                      after.get("template", [{}])[0]
+                      .get("containers", [{}])
+                  )
+                  image = containers[0].get("image", "")
+                  if not image:
+                      problems.append(
+                          f"{address}: ticketforge web image would be empty"
                       )
 
           if problems:
@@ -375,7 +481,7 @@ jobs:
   all-checks-good:
     name: Check / Finished
     needs:
-      [checks, model-eval, backend-eval, frontend-eval, analyze, terraform-validate-plan]
+      [checks, model-eval, backend-eval, frontend-eval, analyze, docker-build-apps, terraform-validate-plan]
     # This ensures it runs even if 'analyze' was skipped,
     # but still fails if any of them actually failed.
     if: |
@@ -385,6 +491,7 @@ jobs:
       needs.backend-eval.result == 'success' &&
       needs.frontend-eval.result == 'success' &&
       (needs.analyze.result == 'success' || needs.analyze.result == 'skipped') &&
+      needs.docker-build-apps.result == 'success' &&
       needs.terraform-validate-plan.result == 'success'
     runs-on: ubuntu-latest
     steps:

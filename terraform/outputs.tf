@@ -122,3 +122,23 @@ output "terraform_state_bucket_name" {
   description = "Bucket used for Terraform state backend configuration."
   value       = var.state_bucket
 }
+
+output "ticketforge_api_uri" {
+  description = "Public HTTPS URL for the TicketForge API Cloud Run service when app serving is enabled."
+  value       = length(google_cloud_run_v2_service.ticketforge_api) > 0 ? google_cloud_run_v2_service.ticketforge_api[0].uri : null
+}
+
+output "ticketforge_inference_uri" {
+  description = "Public HTTPS URL for the TicketForge inference Cloud Run service when app serving is enabled."
+  value       = length(google_cloud_run_v2_service.ticketforge_inference) > 0 ? google_cloud_run_v2_service.ticketforge_inference[0].uri : null
+}
+
+output "ticketforge_web_uri" {
+  description = "Public HTTPS URL for the TicketForge web Cloud Run service when app serving is enabled."
+  value       = length(google_cloud_run_v2_service.ticketforge_web) > 0 ? google_cloud_run_v2_service.ticketforge_web[0].uri : null
+}
+
+output "ticketforge_api_service_account_email" {
+  description = "Runtime service account for the API Cloud Run service when app serving is enabled."
+  value       = length(google_service_account.ticketforge_api) > 0 ? google_service_account.ticketforge_api[0].email : null
+}

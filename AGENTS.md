@@ -42,6 +42,7 @@ All commands run from the **repo root** via [just](https://just.systems). The Ju
 | `just gcp-airflow-trigger <url> <dag_id> [conf_json] [run_id]` | Trigger an Airflow DAG run through the REST API (supports private URL with IAP tunnel) |
 | `just gcp-proxy <airflow\|cloud-sql> [port]` | Open local proxy tunnel to Airflow webserver or Cloud SQL |
 | `just gcp-get-conn-info` | Print deployed service URLs and credentials from Secret Manager |
+| `just docker-build-apps` | Build API, inference, and frontend Cloud Run images locally |
 
 ### Development lifecycle
 
